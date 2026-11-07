@@ -22,7 +22,7 @@
 
 ## Next job after documentation PR
 
-**LEG-01 source-only licensing/asset inventory**, then **DEV-00**: inspect actual Fincept/Qt/Python tools and existing KAIROS services; create a source-cited capability matrix with at least 15 modules, execution authority, data rights/costs, and which pieces run without Qt. Do this with isolated source-only changes. The Memory Lab automation continues MEM-01 separately. P0 security remains owned by canonical KAIROS automation.
+**LEG-01 source-only licensing/asset inventory**, then **DEV-00**: inspect actual Fincept/Qt/Python tools and existing KAIROS services; create a source-cited capability matrix with at least 15 modules, execution authority, data rights/costs, and which pieces run without Qt. Do this with isolated source-only changes. The single renamed **Fincept–KAIROS Roadmap Autonoma** automation covers MEM-01 AND all other fork workstreams, one scoped task per run, without separate concurrent Memory Lab task. Its previous hourly schedule is unchanged; KAIROS P0 is owned by the canonical security automation.
 
 ## State/reporting protocol
 

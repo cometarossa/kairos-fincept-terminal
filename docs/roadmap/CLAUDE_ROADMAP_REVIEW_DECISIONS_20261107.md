@@ -27,7 +27,7 @@ Claude considera coerente la scelta Fincept-first con decision plane headless, i
 2. Prima della prima milestone DEV-00, iniziare LEG-01 **source-only** e distinguere moduli utilizzabili, terze parti e componenti commerciali; l'inventario resta possibile senza parere legale finale, il riuso operativo no.
 3. Il contratto API-SCI-00 va verificato contro il sorgente reale KAIROS e le policy dual-clock, non inventato dalla GUI.
 4. Non attivare job in background su ZimaBlade: attualmente #619 e PR #618 sono aperti. Fincept fork Actions restano spenti.
-5. Il vero confronto Hindsight vs Mem0 e il recupero memoria da questa chat sono **non verificati**; la task Memory Lab resta separata.
+5. Il vero confronto Hindsight vs Mem0 e il recupero memoria da questa chat sono **non verificati**; MEM-01 resta un workstream separato ma nella STESSA automazione generale, precedentemente chiamata Memory Lab. Il cambiamento di scheduling è stato successivo alla review Claude e non costituisce review indipendente della nuova configurazione.
 
 ## Come controllare l'evoluzione della roadmap
 

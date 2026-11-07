@@ -56,7 +56,7 @@ Non presentare PR aperte come completate, test su fixture come prova di mercato 
 | UI-01 | P1 | Modulo KAIROS nella navigazione Fincept e viste ricerca/portafoglio | DEV-00+API-01, build & GUI smoke, status non bloccante, roll back | **OPEN** |
 | TOOL-01 | P1 | Un tool Fincept quant headless con fixture dati sintetici | DEV-00, sandbox, timeout, provenance, risultato deterministico, zero ordini | **OPEN** |
 | RUN-01 | P1 | Servizio persistent decision plane, durable queue, idempotenza, recovery | TOOL-01+API-01; mock test crash/restart; host deploy blocked da SEC-00 | **SOURCE ONLY** |
-| MEM-01 | P1 | Memoria condivisa deterministica e semantica con tenant ACL | PR #2 PENDING; Hindsight/Mem0 non testati live, nessun uso privato | **MEMORY TASK OWNS** |
+| MEM-01 | P1 | Memoria condivisa deterministica e semantica con tenant ACL | PR #2 PENDING; Hindsight/Mem0 non testati live, nessun uso privato | **PR #2 DRAFT / SAME AUTOMATION** |
 | AI-01 | P1 | DeepSeek gateway primario, Claude/Gemini/locali opzionali | Budget e timeout, provider version, reviewer indipendente, abstention fallback | **OPEN** |
 | API-SCI-00 | P1 | Contratto scientifico versionato fra Fincept e KAIROS, distinto dall'API UI | Schema mock di source identity, observed/available/frozen time, historical vs prospective, allowed vs protected outcomes, attempt IDs; NON una route per accedere al holdout | **OPEN / PREREQUISITE DATA-01** |
 | DATA-01 | P1 | Data-source identity, timestamp, entitlement, PIT and staleness | API-SCI-00; allineamento al dual-clock canonico, no contaminazione holdout, licenze | **OPEN** |
@@ -77,7 +77,7 @@ Non presentare PR aperte come completate, test su fixture come prova di mercato 
 2. **Prodotto minimo Fincept-first:** DEV-00 → DEV-01, API-01 mocks → UI-01 → TOOL-01; QA-LOCAL attraversa tutto il percorso. Primo risultato visibile: modulo KAIROS dentro Fincept con prove sintetiche e un tool Fincept reale isolato, senza trading.
 3. **Autonomia persistente:** RUN-01 e AI-01, coordinando jobs esistenti, senza dipendere dalla GUI o reinventare scheduler già KAIROS.
 4. **Metodo scientifico:** API-SCI-00 → DATA-01 → SCI-01 → PORT-01; dual-clock storico-as-of distinto da prospettico congelato prima del futuro; model pretraining non accreditato a blind historical replay senza evidenza.
-5. **Conoscenza:** MEM-01 parallelo, posseduto dalla Memory Lab automation; ledger originale autorevole, recall semantico non autorevole; Graphify eventualmente indicizza codice, non decisioni di portafoglio.
+5. **Conoscenza:** MEM-01 è un workstream distinto ma assegnato alla STESSA automazione generale, non a un secondo processo concorrente; ledger originale autorevole, recall semantico non autorevole; Graphify può indicizzare codice, non decisioni di portafoglio.
 6. **Trading solo successivo:** IG-01 read-only dopo gate; IG-02 è un gate futuro NON autorizzato, LIVE false.
 7. **Affidabilità e crescita:** OPS-01 measure-only → HA-01 se nuovi hardware e workload lo giustificano; no monolite Qt sempre acceso.
 
@@ -90,7 +90,7 @@ Non presentare PR aperte come completate, test su fixture come prova di mercato 
 5. **UI-01:** collega la pagina KAIROS al routing e alla ricerca Fincept, build+smoke Qt e QA-LOCAL.
 6. **TOOL-01:** estrai UN backend Fincept di backtest per dati sintetici e validate exact output.
 7. **AI-01:** mocks DeepSeek, Claude/Gemini/local, budget e failure-mode tests senza credenziali.
-8. **MEM-01:** tramite task dedicata, compare Hindsight e Mem0 in sandbox senza dati privati.
+8. **MEM-01:** nello stesso orchestratore automatico, quando diventa il prossimo task non bloccato, confronta Hindsight e Mem0 in sandbox senza dati privati; PR #2 è già aperta e va verificata senza duplicati.
 9. **SCI-01:** vista/adattatore delle evidenze E0/E2, no read di holdout non ammessi e no fake edge.
 10. **OPS-01:** benchmark host/Zima senza nuovi daemon, preflight per il futuro hardware.
 
@@ -100,7 +100,7 @@ Non presentare PR aperte come completate, test su fixture come prova di mercato 
 
 A ogni nuovo run: leggere AGENTS.md e questo documento, il checkpoint sotto docs/roadmap; leggere **live** AGENTS.md, AGENTS_RULES.md, docs/KAIROS_MASTER_ROADMAP.md, PROJECT_STATE.md e roadmap pertinenti dal canonico KAIROS. Verificare SHA, PR, issues, CI/Actions e stato runtime solo se pertinente/autorizzato. Confrontare implementazioni già esistenti prima di introdurre servizi. Classificare **VERIFIED_NOW**, **DOCUMENTED**, **NOT_VERIFIED**, **BLOCKED**. Prendere solo il prossimo task non bloccato. Eseguire test locali in sandbox e commit su branch isolato, proporre PR draft e riportare test/commit/rischi; non effettuare merge o deploy non autorizzato.
 
-Ownership: automazione autonoma KAIROS segue SEC-00 nel canonico; Fincept–KAIROS Memory Lab segue MEM-01 e PR #2; automazione generale Fincept segue DEV-00/API-01/UI-01 ecc. e non modifica PR memoria. Claude fa review critica con source evidence e può sbagliare: riportare obiezioni e verificarle contro codice/test, non considerare un voto di Claude come controllo di sicurezza.
+Ownership: l'automazione autonoma KAIROS segue SEC-00 nel canonico; UNICA automazione Fincept–KAIROS Roadmap Autonoma (già Memory Lab, aggiornata il 2026-11-07) segue tutti i task del fork inclusa MEM-01 e PR #2, scegliendo UNA sola priorità per run e senza concorrenza sullo stesso branch. Non creare nuove automazioni che duplicano i lavori: limite piano 5 attività già occupate. Claude fa review critica con source evidence ma può sbagliare: verificare ogni affermazione prima di accettarla.
 
 ### STOP CONDITIONS
 

@@ -25,8 +25,8 @@ This is a PUBLIC FinceptTerminal fork. The user chose **Fincept as the primary p
 ## Workstream ownership / concurrency
 
 - Existing KAIROS security automation owns KAIROS issue #619 and PR #618 in the canonical repository.
-- Fincept–KAIROS Memory Lab owns **MEM-01** and fork draft PR #2; this master-roadmap agent must NOT edit its files/branch or duplicate its steps.
-- General Fincept–KAIROS roadmap automation owns the unblocked non-memory work, starting with **DEV-00**. When in conflict, leave a source-only note and choose another independent task.
+- The SINGLE Fincept–KAIROS Roadmap Autonoma task owns all fork workstreams including **MEM-01** and draft PR #2. It executes at most ONE workstream per run; it must re-check PR heads, avoid concurrent edits and never duplicate its own previous work.
+- The same Fincept–KAIROS Roadmap Autonoma task schedules non-memory work (initially LEG-01/DEV-00) AND memory, selecting the next safe priority by dependency. On conflict, document it and choose another source-only task.
 - One contributor per file/branch at a time; branch from verified main HEAD; do not merge unreviewed PRs. No autonomous task may change GitHub Actions settings.
 
 If a task is blocked by the KAIROS constitution, STOP that operation and report it; switch to a genuinely independent source-only audit rather than weakening the gate.

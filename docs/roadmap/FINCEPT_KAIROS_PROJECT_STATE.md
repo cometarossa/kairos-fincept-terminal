@@ -6,6 +6,7 @@
 ## Verified in this session
 
 - Fincept fork cometaRossa/kairos-fincept-terminal: main SHA **7716ee8613249fb44c4d14036c5bc16ed6f34e97**, GitHub Actions **disabled**.
+- **Automazione generale verificata:** Fincept–KAIROS Roadmap Autonoma, ID Automation_05ba6d57f7fc81918190f9c73637053a, attiva, cadenza oraria (la precedente Memory Lab è stata riconvertita, non è un secondo task). Un solo workstream per esecuzione; la sicurezza KAIROS resta un'altra automazione.
 - [Fincept-first ADR and memory shortlist PR #1](https://github.com/cometarossa/kairos-fincept-terminal/pull/1): **OPEN DRAFT**, not integrated.
 - [SQLite/FTS5 synthetic Memory POC PR #2](https://github.com/cometarossa/kairos-fincept-terminal/pull/2): **OPEN DRAFT**; local Mac **14/14** unittest PASS at 32201c2, no live Hindsight or Mem0 service.
 - KAIROS canonical branch feature/kairos-autonomous-bridge: **77f0c0cc635945c808cafd581c1bfbcaaddffcac** at check.

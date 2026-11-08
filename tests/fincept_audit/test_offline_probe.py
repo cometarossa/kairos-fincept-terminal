@@ -13,6 +13,7 @@ import unittest
 SCRIPT = (Path(__file__).resolve().parents[2]
           / "tools" / "fincept_audit" / "offline_backtesting_probe.py")
 PROVIDERS = ("vectorbt", "backtestingpy", "fasttrade", "zipline", "bt", "fincept")
+BACKTESTINGPY = SCRIPT.with_name("backtestingpy_fixture_probe.py")
 
 FAKE_PROVIDER = r"""
 import json
@@ -39,6 +40,17 @@ print(json.dumps(result))
 
 
 class ProbeContractTests(unittest.TestCase):
+    def test_second_provider_fails_closed_without_socket_guard(self):
+        with tempfile.TemporaryDirectory(prefix="fincept-audit-no-guard-") as tmp:
+            result = subprocess.run(
+                [sys.executable, "-S", str(BACKTESTINGPY), "--scripts-root", tmp],
+                capture_output=True, text=True, timeout=12,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C.UTF-8",
+                     "PYTHONPATH": "", "PYTHONNOUSERSITE": "1"},
+            )
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("network-deny guard not active", result.stderr)
+
     def test_fixture_probe_with_python_symlinks(self):
         with tempfile.TemporaryDirectory(prefix="fincept-qa-local-") as tmp:
             root = Path(tmp)

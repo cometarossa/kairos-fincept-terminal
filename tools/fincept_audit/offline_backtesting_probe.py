@@ -115,14 +115,16 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="fincept-offline-audit-") as dir_name:
         temp = Path(dir_name)
         env = child_env(scripts, temp)
+        # Verify our deny guard by object identity, WITHOUT attempting any socket
+        # connection. If the patch is missing, fail closed before any provider runs.
         guard_check = subprocess.run(
             (str(py1), "-c",
-             "import socket; s=socket.socket(); "
-             "assert socket.create_connection(('192.0.2.1', 80)) is None"),
+             "import socket, sitecustomize; "
+             "assert socket.create_connection is sitecustomize._block; "
+             "assert socket.socket.connect is sitecustomize._block"),
             env=env, capture_output=True, text=True, timeout=6, check=False,
         )
-        # Guard must reject socket access: the injected assertion must fail.
-        if guard_check.returncode == 0 or "FINCEPT_AUDIT_NETWORK_BLOCKED" not in guard_check.stderr:
+        if guard_check.returncode != 0:
             raise SystemExit("STOP: Python network-deny guard not active")
         report: dict[str, object] = {
             "category": "synthetic_offline_functional_probe",

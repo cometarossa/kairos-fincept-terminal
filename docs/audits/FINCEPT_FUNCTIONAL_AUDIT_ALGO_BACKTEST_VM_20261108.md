@@ -3,6 +3,8 @@
 **Data:** 2026-11-08 · **Stato:** prima fase di audit effettivo, NON certificazione completa di tutte le schermate.
 **Obiettivo:** preservare il terminale e ogni strumento utile, poi collegarli a un LLM autonomo e ai gate scientifici KAIROS senza duplicare core o autorità trading.
 
+**AGGIORNAMENTO V1.1:** la verifica completa del probe VectorBT sulla VM e il calcolo reale del secondo provider Backtesting.py sono ora PASS. Vedere [Addendum VM V1.1](FINCEPT_BACKTESTING_VM_RUNTIME_V1_1_20261108.md) per prove, limitazioni e riproduzione. I rilievi V1 non ancora aggiornati sono storici e non attestano lo stato finale dei test.
+
 ## Ambiente e metodo
 
 - VM Debian GNU/Linux 13 (trixie) su iMac/QEMU, 4 vCPU, 6144 MB RAM, filesystem root 16 GiB con circa 4 GiB liberi. Processo FinceptTerminal v4.5.1 attivo; hash SHA256 del binario osservato b02726f140cde34d4e7a4fae67c60a03bd980c9052edb4b3b1644d41b8271f40.
@@ -56,7 +58,7 @@ Il terminale Backtesting in src/services/backtesting/BacktestingService.cpp util
 | Provider | Strategie disponibili | Indicatori metadata | Stato calcolo con serie sintetica |
 |---|---:|---:|---|
 | VectorBT | 23 | 17 | **PASS**: sei test brokerCandles + un backtest SMA su 320 barre |
-| Backtesting.py | 26 | 31 | NON TESTATO |
+| Backtesting.py | 26 | 31 | **PASS, solo fixture con data loader del test**, dettagli addendum V1.1 |
 | FastTrade | 20 | 36 | NON TESTATO (pacchetto fasttrade non trovato nel venv1) |
 | Zipline | 23 | 17 | NON TESTATO |
 | BT | 19 | 17 | NON TESTATO |
@@ -78,7 +80,7 @@ Non installare ciecamente yfinance nel venv NumPy 1 o spostare VectorBT nel NumP
 - Un backtest invocato direttamente in venv-numpy1 su 320 barre **fabbricate** KAIROS_FIXTURE ha prodotto success=true, status=completed, con commission 0.001 e slippage 0.0005 dichiarati, dataSource=synthetic-regression-fixture.
 - Il provider ha marcato usingSyntheticData=false perché non ha creato lui i prezzi fake: **è falso interpretare quel flag come dimostrazione di dati di mercato reali**. L'adapter KAIROS deve imporre la propria classificazione della fonte, indipendente da Fincept.
 - Non è stata validata la fedeltà economica di questo backtest, neppure usando commission/slippage, e non viene qui riportata alcuna performance immaginaria.
-- Il nuovo script proposto tools/fincept_audit/offline_backtesting_probe.py serve a ripetere queste verifiche in modalità sintetica, con un guard socket Python di difesa in profondità. **La sua prima esecuzione ha avuto falsi FAIL dovuti al nostro errore di risoluzione del symlink del venv: corretto nel sorgente, ma la prova completa della versione corretta resta NON VERIFICATA.** Le prove manuali dirette sopra sono indipendenti e già PASS. Un test unitario locale **1/1 PASS** su sei provider fittizi verifica il contratto dell'harness, la protezione socket, il caricamento dei metadata, i 320 candle input fittizi e la preservazione del link venv; **non** sostituisce il test completo con i provider installati nella VM.
+- Il nuovo script proposto tools/fincept_audit/offline_backtesting_probe.py serve a ripetere queste verifiche in modalità sintetica, con un guard socket Python di difesa in profondità. **La prima esecuzione falliva per risoluzione del symlink del venv; la correzione e il passaggio integrale sulla VM sono ora VERIFICATI, vedi addendum V1.1.** Le prove manuali dirette sopra sono indipendenti e già PASS. Un test unitario locale **1/1 PASS** su sei provider fittizi verifica il contratto dell'harness, la protezione socket, il caricamento dei metadata, i 320 candle input fittizi e la preservazione del link venv; **non** sostituisce il test completo con i provider installati nella VM.
 
 ## 3. AI Quant Lab, Alpha Arena e KAIROS
 

@@ -1,5 +1,3 @@
-[Reading 81 lines from start (total: 81 lines, 0 remaining)]
-
 """Synthetic offline API-01 gateway contract tests (stdlib only)."""
 import unittest
 

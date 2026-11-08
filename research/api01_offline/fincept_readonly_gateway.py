@@ -1,5 +1,3 @@
-[Reading 82 lines from start (total: 82 lines, 0 remaining)]
-
 """API-01 isolated proof: deny-by-default, offline, read-only Fincept tool catalog.
 
 No network listener, broker connection, environment/credential access or Fincept

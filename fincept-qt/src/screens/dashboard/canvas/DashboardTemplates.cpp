@@ -80,6 +80,17 @@ QVector<DashboardTemplate> all_dashboard_templates() {
              gi("risk_metrics", 8, 8, 4, 5),
          }},
 
+        // ── KAIROS Research (read-only, synthetic/offline status) ─────────────
+        {"kairos_research",
+         QT_TRANSLATE_NOOP("fincept::screens::DashboardTemplates", "KAIROS Research"),
+         QT_TRANSLATE_NOOP("fincept::screens::DashboardTemplates", "Synthetic evidence, research and risk — no trading"),
+         {
+             gi("kairos_research_status", 0, 0, 8, 5, 4, 4),
+             gi("news", 8, 0, 4, 5, 3, 4),
+             gi("risk_metrics", 0, 5, 6, 5, 3, 4),
+             gi("screener", 6, 5, 6, 5, 3, 4),
+         }},
+
         // ── Geopolitics Analyst ───────────────────────────────────────────────
         {"geopolitics",
          QT_TRANSLATE_NOOP("fincept::screens::DashboardTemplates", "Geopolitics Analyst"),

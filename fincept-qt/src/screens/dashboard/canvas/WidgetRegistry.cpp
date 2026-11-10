@@ -16,6 +16,7 @@
 #include "screens/dashboard/widgets/MarketSentimentWidget.h"
 #include "screens/dashboard/widgets/NewsCategoryWidget.h"
 #include "screens/dashboard/widgets/NewsWidget.h"
+#include "screens/dashboard/widgets/KairosResearchStatusWidget.h"
 #include "screens/dashboard/widgets/NotesWidget.h"
 #include "screens/dashboard/widgets/OpenPositionsWidget.h"
 #include "screens/dashboard/widgets/OrderBookMiniWidget.h"
@@ -123,6 +124,15 @@ WidgetRegistry::WidgetRegistry() {
                      QT_TRANSLATE_NOOP("fincept::screens::WidgetRegistry", "Research"),
                      QT_TRANSLATE_NOOP("fincept::screens::WidgetRegistry", "Upcoming macro events and releases"), 4, 4,
                      2, 3, [](const QJsonObject&) { return new widgets::EconomicCalendarWidget; }});
+
+    // ── KAIROS (local research only; never a broker or scientific PASS) ─────
+    register_widget({"kairos_research_status",
+                     QT_TRANSLATE_NOOP("fincept::screens::WidgetRegistry", "KAIROS Research Status"),
+                     QT_TRANSLATE_NOOP("fincept::screens::WidgetRegistry", "Research"),
+                     QT_TRANSLATE_NOOP("fincept::screens::WidgetRegistry",
+                                       "Local synthetic research milestones, with evidence and blocked gates"),
+                     6, 5, 4, 4,
+                     [](const QJsonObject&) { return new widgets::KairosResearchStatusWidget; }});
 
     // ── Portfolio ─────────────────────────────────────────────────────────────
     register_widget({"watchlist", QT_TRANSLATE_NOOP("fincept::screens::WidgetRegistry", "Watchlist"),

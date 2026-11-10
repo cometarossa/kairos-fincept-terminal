@@ -94,3 +94,13 @@ scientific evaluator → theoretical portfolio only`.
    between a KAIROS service and Fincept, with staleness/provenance gates.
 4. Show real scientific verdicts only when the KAIROS canonical evaluator
    provides verifiable, scoped evidence and Gate9R authority is still isolated.
+
+## 2026-11-10 Mac offline verification (actual source, no broker)
+
+Verified on authorized iMac, in a separate temporary test directory:
+
+- Source: **actual** `fincept-qt/scripts/technicals/volatility_indicators.py` from fork `main` at blob `d991f5448be1e16675f511993896b3f8edea1059`, SHA-256 `76c8a2329c3109d801222ecc987f57005041533e8264c90f1d8b46a4c0109897`.
+- Reused existing **unmerged** PR #15 fixture harness code, exact blob `3eab179dc6b6617c62fc15d77e61ce647a9b3e7d`, with 120 synthetic OHLC bars. Real Fincept calculation returned **8 finite indicator fields**, no Qt, no market-feed request.
+- The new `status_report.py` consumed that result and atomically emitted `fincept_kairos_research_status_v1` with `fincept_tool=MOCK_PASS`, `tool_gateway=BLOCKED`, `kairos_science=NOT_VERIFIED`, `theoretical_portfolio=BLOCKED`. No API calls, no credentials, no trades.
+- New exporter and static Qt registration tests: **10/10 unittest PASS**, `compileall` PASS. The standalone exporter and fixture calculation both executed successfully on Mac.
+- These tests were against locally copied exact GitHub sources. **A native Qt C++ compile, screen launch, screenshot and deployed app integration remain NOT VERIFIED.** The report was written into the isolated temporary test directory, **not** the user's live Fincept AppDataLocation.

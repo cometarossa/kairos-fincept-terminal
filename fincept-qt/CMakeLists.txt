@@ -1698,6 +1698,7 @@ set(SCREEN_SOURCES
     src/screens/dashboard/widgets/GeopoliticsEventsWidget.cpp
     src/screens/dashboard/widgets/MaritimeVesselsWidget.cpp
     src/screens/dashboard/widgets/NotesWidget.cpp
+    src/screens/dashboard/widgets/KairosResearchStatusWidget.cpp
     # ReportBuilderScreen split; see header.
     src/screens/report_builder/ReportBuilderScreen.cpp
     src/screens/report_builder/ReportBuilderScreen_Components.cpp
@@ -2331,6 +2332,7 @@ set_source_files_properties(
     src/screens/dashboard/widgets/GeopoliticsEventsWidget.cpp
     src/screens/dashboard/widgets/MaritimeVesselsWidget.cpp
     src/screens/dashboard/widgets/NotesWidget.cpp
+    src/screens/dashboard/widgets/KairosResearchStatusWidget.cpp
     src/screens/data_mapping/DataMappingScreen.cpp
     src/screens/data_mapping/DataMappingScreen_Data.cpp
     src/screens/data_mapping/DataMappingScreen_Layout.cpp

@@ -88,6 +88,30 @@ converting.** This is a convention, not an arithmetic error.
    include slippage (the equity matches the oracle only with it), but the
    statistic is not populated. Fees are reported correctly.
 
+## Evidence envelope for the read-only bridge
+
+`tools/fincept_audit/backtest_evidence_v1.py` projects a probe result onto a
+versioned envelope (`kairos_fincept_backtest_evidence_v1`, tool id
+`fincept.research.backtest.sma_crossover.fixture.v1`). It is the only shape
+meant to cross the Fincept → KAIROS boundary:
+
+- exact field set at every level; only allowlisted scenario values are copied
+  (name, bars, trades, exit reasons, bars-per-year, total return, fees, max
+  drawdown, CAGR-based Sharpe) — anything else in the probe result is dropped;
+- fixed labels that validation never upgrades: `dataset_class=SYNTHETIC_FIXTURE`,
+  `scientific_status=NOT_EVALUATED`, `broker_authority=false`,
+  `promotion_eligible=false`, zero cost, the four quality flags;
+- pinned source and fixture hashes must equal the probe's; a self-hash binds
+  every value; payload bounded at 32 KiB; duplicate JSON keys, NaN/infinity,
+  booleans used as numbers and out-of-range numbers are refused.
+
+Field names follow the evidence contract of the unmerged bridge sidecar (PR #25)
+so the envelope can later be listed there under a server-owned capability
+(suggested: `quant.backtest.read`). This PR does not edit that policy, adds no
+service and no network path. The envelope states only that pinned code
+reproduced an oracle on synthetic fixtures; it is not a signal and no KAIROS
+gate may treat it as scientific evidence.
+
 ## Isolation actually enforced
 
 - Nine original files are sha256-pinned to fork `main` `7716ee86`; the child
@@ -107,6 +131,7 @@ python -m venv .venv && .venv/bin/pip install 'numpy>=2.2.3,<3' 'pandas>=2.3.3,<
 .venv/bin/python -m pytest -q tests/fincept_audit/test_backtest_oracle_v1.py \
     tests/fincept_audit/test_backtest_metrics_oracle_v1.py \
     tests/fincept_audit/test_backtest_provider_probe_v1.py \
+    tests/fincept_audit/test_backtest_evidence_v1.py \
     tests/fincept_audit/test_backtest_vectorbt_reference_v1.py
 # third leg (optional): pip install 'vectorbt==0.28.2' 'plotly<6'
 .venv/bin/python tools/fincept_audit/backtest_provider_probe_v1.py \
@@ -117,8 +142,8 @@ Observed on 2026-11-11 (Linux, Python 3.13):
 
 | Interpreter | Result |
 |---|---|
-| numpy 2.5.4, pandas 2.3.3 (Fincept numpy2 pins), no vectorbt | 51 passed, 2 skipped |
-| numpy 2.5.4, pandas 3.1.1, vectorbt 0.28.2, plotly 5.24.1 | 53 passed |
+| numpy 2.5.4, pandas 2.3.3 (Fincept numpy2 pins), no vectorbt | 66 passed, 2 skipped |
+| numpy 2.5.4, pandas 3.1.1, vectorbt 0.28.2, plotly 5.24.1 | 68 passed |
 
 ## Not covered
 

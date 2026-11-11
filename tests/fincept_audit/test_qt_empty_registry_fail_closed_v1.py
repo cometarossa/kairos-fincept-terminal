@@ -37,11 +37,31 @@ class QtEmptyRegistryFailClosedTests(unittest.TestCase):
     def test_success_return_in_empty_guard_is_rejected(self):
         self.assertFalse(inspect_guard(self.source.replace("return 4;", "return 0;", 1)))
 
+    def test_guard_removed_is_rejected(self):
+        guard_start = self.source.index("    if (ids.isEmpty())")
+        guard_end = self.source.index("    QStringList failures;", guard_start)
+        removed = self.source[:guard_start] + self.source[guard_end:]
+        self.assertFalse(inspect_guard(removed))
+
     def test_guard_moved_after_iteration_is_rejected(self):
         guard_start = self.source.index("    if (ids.isEmpty())")
         guard_end = self.source.index("    QStringList failures;", guard_start)
-        moved = self.source[:guard_start] + self.source[guard_end:]
+        block = self.source[guard_start:guard_end]
+        without = self.source[:guard_start] + self.source[guard_end:]
+        after_loop = without.index("    if (failures.isEmpty())")
+        moved = without[:after_loop] + block + without[after_loop:]
         self.assertFalse(inspect_guard(moved))
+
+    def test_reversed_guard_condition_is_rejected(self):
+        changed = self.source.replace("if (ids.isEmpty())",
+                                      "if (!ids.isEmpty())", 1)
+        self.assertFalse(inspect_guard(changed))
+
+    def test_missing_explicit_failure_diagnostic_is_rejected(self):
+        changed = self.source.replace(
+            "[Smoke] FAIL: no registered screens to test",
+            "[Smoke] OK: 0 screens constructed", 1)
+        self.assertFalse(inspect_guard(changed))
 
 
 if __name__ == "__main__":

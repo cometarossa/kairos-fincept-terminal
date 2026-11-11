@@ -17,6 +17,7 @@ import json
 import math
 import os
 from pathlib import Path
+import site
 import subprocess
 import sys
 import tempfile
@@ -159,9 +160,20 @@ def run_fixture(principal: str, requested_tool: str, source: Path, harness: Path
             "PYTHONNOUSERSITE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
         }
+        # Python -I excludes user-site packages. The audited Mac Fincept
+        # dependencies live there: opt in to ONLY that locally discovered path
+        # without .pth execution or inherited PYTHONPATH. This is NOT a
+        # dependency sandbox/attestation and must not serve untrusted agents.
+        dependency_site = site.getusersitepackages()
+        entrypoint = (
+            "import runpy,sys; site_path,runner,*args=sys.argv[1:];"
+            "sys.path.append(site_path);sys.argv=[runner,*args];"
+            "runpy.run_path(runner,run_name='__main__')"
+        )
         try:
             proc = subprocess.run(
-                [sys.executable, "-I", str(runner_copy), "--module-file", str(source_copy)],
+                [sys.executable, "-I", "-c", entrypoint, dependency_site,
+                 str(runner_copy), "--module-file", str(source_copy)],
                 cwd=tmp, env=env, timeout=RUN_TIMEOUT_SECONDS, text=True,
                 capture_output=True, check=False,
             )

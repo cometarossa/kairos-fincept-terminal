@@ -106,6 +106,11 @@ def run_all(source_dir: Path) -> dict:
             observed_sparse = set()
             for col in generated:
                 series = output[col]
+                # Historical infinity is invalid even when the final bar is finite.
+                # NaN warm-up and inactive-regime observations remain permitted.
+                import numpy as np
+                if bool(np.isinf(series.to_numpy(dtype=float)).any()):
+                    raise TechnicalProbeError("INFINITE_INDICATOR_HISTORY:" + name + ":" + col)
                 last = series.iloc[-1]
                 if not isinstance(last, (int, float)) and not hasattr(last, "item"):
                     raise TechnicalProbeError("NON_NUMERIC_INDICATOR:" + name + ":" + col)

@@ -32,7 +32,9 @@ pasted tool-output line (`[executed on device: iMac-3.local (...)]`), so
 | #35 | `feature/tool01-backtest-evidence-envelope-v1-20261111` | #34 | `9e5aba21` | Versioned allowlisted evidence envelope `kairos_fincept_backtest_evidence_v1` | 66 + 2 skipped / 68 |
 | #36 | `test/qa-local-qt-unit-harness-20261111` | `main` | `3aa74f29` | Native Qt harness (upstream test CMake unmodified) + exact reference for the C++ `IndicatorEngine` | Qt 6.8.3: 16 + 15 + 8 + 40 QtTest passed; 6 Python passed |
 
-| #38 | `fix/pr26-stray-device-log-lines-20261111` | #26 | `4f619082` | Removes the two stray lines that break #26's head | `1 error` before, 29 passed after |
+| #38 | `fix/pr26-stray-device-log-lines-20261111` | #26 | `29e5e757` | Removes the two stray lines that break #26's head (re-merged onto #26 `abe3839f`, still broken there) | `1 error` before, 34 passed after |
+| #40 | `fix/backtest-multi-asset-total-fees-20261111` | `main` | `651237bb` | **Fix**: multi-asset VectorBT `statistics.totalFees` was always 0; 15 lines in two research scripts | 2 tests fail before, 5 passed after; single-asset output byte-identical |
+| #41 | `test/tool01-backtest-multi-asset-oracle-20261112` | #35 | `52ad53f3` | Multi-asset path vs per-symbol oracles; twenty scenarios | 69 + 2 skipped / 71 |
 | #37 | `docs/tool01-qa-local-checkpoint-20261111` | `main` | this file | Checkpoint | — |
 
 No original Fincept file is modified by any of them.
@@ -55,13 +57,16 @@ No original Fincept file is modified by any of them.
    (`OrderValidator.cpp` now includes the settings repository and logger).
    **Owner decision needed**: the fix is in broker order-validation code, outside
    the scope given to the agent.
-6. The simulator, the metrics and the 22 C++ indicators checked showed **no
-   arithmetic error** against the exact references.
+6. Multi-asset backtests report `statistics.totalFees = 0` although commissions
+   are charged (fixed in #40; #41 pins the original behaviour, so the two source
+   pins and that expectation must be updated together when #40 lands).
+7. Apart from finding 6, the simulator, the metrics and the 22 C++ indicators
+   checked showed **no arithmetic error** against the exact references.
 
 ## Not done / not verified
 
 - No build of `FinceptTerminal`, no screen or widget test, no CI.
-- Backtest: Kelly / volatility / risk sizing, multi-asset, the other strategies,
+- Backtest: Kelly / volatility / risk sizing, more than two symbols, the other strategies,
   optimisation, walk-forward, the extended analysis blocks.
 - Indicators: ADX, Supertrend, edge cases.
 - No KAIROS-side consumer of the evidence envelope; the bridge policy of
@@ -86,8 +91,9 @@ Suggested next priorities, in order:
 
 1. #26's owner takes #38 (or removes the two lines itself), then #27–#31 are
    updated onto the repaired head.
-2. Multi-asset path of the backtest provider (per-symbol allocation, combined
-   equity on the common index) against the oracle.
+2. After #40: update `PINNED_SOURCES` and the multi-asset fee expectation in the
+   probe (hashes are in #40's description). Check the other backtesting
+   providers for the same missing-fees pattern.
 3. ADX and Supertrend in the C++ reference suite; edge cases.
 4. A KAIROS-side, offline, non-authoritative reader for the evidence envelope,
    once the owner decides where it should live.

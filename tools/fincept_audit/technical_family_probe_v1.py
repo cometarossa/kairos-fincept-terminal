@@ -65,7 +65,10 @@ def _load_pinned_module(path: Path, name: str, expected: str):
     if not spec or not spec.loader:
         raise TechnicalProbeError("UNAVAILABLE_ORIGINAL_MODULE:" + name)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    # Execute exactly the bytes whose hash was checked above. A matching
+    # timestamp/size .pyc can otherwise substitute different code, and the
+    # source loader may write a new cache during this read-only probe.
+    exec(compile(data, str(path), "exec"), module.__dict__)
     return module
 
 

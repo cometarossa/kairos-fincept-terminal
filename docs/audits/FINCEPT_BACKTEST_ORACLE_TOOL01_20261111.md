@@ -47,6 +47,22 @@ outranks a signal exit on the same bar. Consequence worth knowing: because the
 check uses the close and the fill is the next open, a "stop-loss" exit can
 fill above the entry price, and a stop is never filled at its own level.
 
+## Multi-asset path
+
+Three scenarios run two symbols (the base fixture and a second series with a
+different level, wave and drift): 75/25 weights, equal weight, and 75/25 with a
+take-profit. The provider simulates each symbol on its share of the capital and
+sums the equity bar by bar; the oracle does the same with exact arithmetic.
+Combined equity, all seven trades (symbol, dates, prices, size, P&L, commission,
+exit reason) and the whole metrics block agree within 1e-9. A wrong allocation
+is shown to fail the comparison.
+
+One real defect was found there and is fixed separately in PR #40:
+`statistics.totalFees` is **0 for every multi-asset run** on the pinned sources,
+although 650–725 of commission is charged and listed per trade. The probe pins
+that original behaviour; when #40 lands, the two source pins and this
+expectation change together.
+
 ## Metrics block
 
 `tools/fincept_audit/backtest_metrics_oracle_v1.py` recomputes the provider's
@@ -142,12 +158,13 @@ Observed on 2026-11-11 (Linux, Python 3.13):
 
 | Interpreter | Result |
 |---|---|
-| numpy 2.5.4, pandas 2.3.3 (Fincept numpy2 pins), no vectorbt | 66 passed, 2 skipped |
-| numpy 2.5.4, pandas 3.1.1, vectorbt 0.28.2, plotly 5.24.1 | 68 passed |
+| numpy 2.5.4, pandas 2.3.3 (Fincept numpy2 pins), no vectorbt | 69 passed, 2 skipped |
+| numpy 2.5.4, pandas 3.1.1, vectorbt 0.28.2, plotly 5.24.1 | 71 passed |
 
 ## Not covered
 
-Kelly / volatility / risk sizing, intrabar stop fills, multi-asset, the other
+Kelly / volatility / risk sizing, intrabar stop fills, more than two symbols or
+symbols with different calendars, the other
 strategies, optimisation, walk-forward, the extended blocks (`extendedStats`,
 `tradeAnalysis`, `drawdownAnalysis`, `returnsAnalysis`, `riskMetrics`, rolling
 and monthly tables), intraday annualisation, the yfinance path, the Qt screen, and anything about real markets. The second

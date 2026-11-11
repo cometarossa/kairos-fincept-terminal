@@ -62,10 +62,14 @@ FIXTURE_SHA256 = {
     "160": "96228c052d7daeb8da5f079ac1c221c0db4fe7971a25487f6bb3d2f1a7ca1a4e",
     "130": "8d5947c974752a706fc7b47f8cff3884fe886fed580d21ea5658b26935cf04dd",
     "160/shock53x500": "6f9d2f5d04801dc64e160faa0a19ceaa48ce52cdd297538f5e1602bbe0325d46",
+    "160/second": "c05a9e363560c2a5fbe78e2e2599291362f168b9a7f743bd81e843bcb034431d",
     "160/weekdays": "11f6b0fdfd4948b527e87e214d403f1180d4ff43747b3928a1dfe33371dc497a",
 }
 SHOCK = {"bars": 160, "shock_bar": 53, "shock_cents": 500}
 WEEKDAYS = {"bars": 160, "weekdays_only": True}
+# A second, differently shaped series for multi-asset runs (other level, wave and drift).
+SECOND = {"bars": 160, "wave": 4.0, "wave_period": 7.0, "base": 50.0, "drift_cents": 3}
+MULTI_SYMBOLS = ("KAIROSSYNA", "KAIROSSYNB")
 # Bars per year the provider must infer from the bar spacing, and the text it
 # must print in `assumptions.annualization` for it.
 ANNUALIZATION_TEXT = {365: "365 bars/year (daily bars, 7-day market)",
@@ -177,6 +181,8 @@ def fixture_for(scenario: dict):
         key += "/shock%dx%d" % (spec["shock_bar"], spec["shock_cents"])
     if spec.get("weekdays_only"):
         key += "/weekdays"
+    if "base" in spec:
+        key += "/second"
     candles = oracle.synthetic_candles(**spec)
     digest = sha256(json.dumps(candles, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     if FIXTURE_SHA256.get(key) != digest:
@@ -299,7 +305,7 @@ def compare(response: dict, expected: dict) -> dict:
         raise ProbeError("TRADE_COUNT_MISMATCH:provider=%s:oracle=%d" % (
             len(trades) if isinstance(trades, list) else "?", len(expected["trades"])))
     for i, (got, want) in enumerate(zip(trades, expected["trades"])):
-        if got.get("side") != "long" or got.get("symbol") != SYMBOL:
+        if got.get("side") != "long" or got.get("symbol") != want.get("symbol", SYMBOL):
             raise ProbeError("TRADE_IDENTITY_MISMATCH:%d" % i)
         if got.get("entryDate") != _iso_day(want["entry_time"]) or \
                 got.get("exitDate") != _iso_day(want["exit_time"]):
@@ -314,7 +320,9 @@ def compare(response: dict, expected: dict) -> dict:
     statistics = data.get("statistics") or {}
     performance = data.get("performance") or {}
     _close(statistics.get("finalCapital"), expected["final_capital"], "finalCapital")
-    _close(statistics.get("totalFees"), expected["total_fees"], "totalFees")
+    # Multi-asset runs on the pinned sources report 0 here (characterised defect).
+    _close(statistics.get("totalFees"), expected.get("provider_total_fees", expected["total_fees"]),
+           "totalFees")
     _close(performance.get("totalReturn"), expected["total_return"], "totalReturn")
     if performance.get("totalTrades") != len(expected["trades"]):
         raise ProbeError("TOTAL_TRADES_MISMATCH")
@@ -402,9 +410,83 @@ def run_scenario(backtesting_dir: Path, scenario: dict, python: str = sys.execut
     }
 
 
+def multi_asset_scenarios():
+    """Two symbols, weighted and equal allocation, with and without a stop."""
+    costs = {"fast": 5, "slow": 20, "commission": "0.001", "slippage": "0.0005"}
+    return [
+        dict(costs, name="multi_asset_75_25", weights=["0.75", "0.25"]),
+        dict(costs, name="multi_asset_equal_weight"),
+        dict(costs, name="multi_asset_75_25_take_profit", weights=["0.75", "0.25"], take_profit="0.03"),
+    ]
+
+
+def run_multi_asset_scenario(backtesting_dir: Path, scenario: dict, python: str = sys.executable) -> dict:
+    """The provider's multi-asset path: each symbol simulated on its share of the
+    capital, equity summed bar by bar, trades listed symbol by symbol."""
+    capital = Fraction(scenario.get("initial_capital", "100000"))
+    weights = [Fraction(w) for w in scenario.get("weights") or ["0.5", "0.5"]]
+    if len(weights) != len(MULTI_SYMBOLS) or sum(weights) != 1 or min(weights) <= 0:
+        raise ProbeError("INVALID_MULTI_ASSET_WEIGHTS")
+    series = [fixture_for({}), fixture_for({"fixture": SECOND})]
+    legs = []
+    for symbol, candles, weight in zip(MULTI_SYMBOLS, series, weights):
+        leg = oracle.simulate(
+            candles, fast=scenario["fast"], slow=scenario["slow"],
+            initial_capital=str(capital * weight),
+            commission=scenario.get("commission", "0"), slippage=scenario.get("slippage", "0"),
+            **{name: scenario.get(name) for name in STOP_KEYS})
+        if not leg["trades"]:
+            raise ProbeError("SCENARIO_HAS_NO_TRADES:" + scenario["name"] + ":" + symbol)
+        legs.append(leg)
+    equity = [sum(values, Fraction(0)) for values in zip(*(leg["equity"] for leg in legs))]
+    trades = [dict(trade, symbol=symbol) for symbol, leg in zip(MULTI_SYMBOLS, legs)
+              for trade in leg["trades"]]
+    true_fees = sum((leg["total_fees"] for leg in legs), Fraction(0))
+    expected = {"bars": legs[0]["bars"], "times": legs[0]["times"], "equity": equity,
+                "trades": trades, "final_capital": equity[-1], "total_fees": true_fees,
+                "total_return": equity[-1] / capital - 1,
+                # ORIGINAL behaviour on the pinned sources: the combined portfolio is
+                # built without the per-symbol fees, so the statistic reads 0.
+                "provider_total_fees": Fraction(0)}
+
+    request = build_request(series[0], scenario)
+    request["symbols"] = list(MULTI_SYMBOLS)
+    request["brokerCandles"] = {
+        symbol: [{"t": row["t"], "o": float(row["o"]), "h": float(row["h"]),
+                  "l": float(row["l"]), "c": float(row["c"]), "v": row["v"]} for row in candles]
+        for symbol, candles in zip(MULTI_SYMBOLS, series)}
+    if scenario.get("weights"):
+        request["weights"] = [float(w) for w in weights]
+    run = run_original_provider(backtesting_dir, request, python)
+    labels = compare(run["response"], expected)
+    measured = metrics_oracle.metrics(equity, trades, capital, 365)
+    compare_metrics(run["response"], measured)
+    return {
+        "scenario": scenario["name"],
+        "bars": expected["bars"],
+        "trades": len(trades),
+        "trades_per_symbol": {s: len(leg["trades"]) for s, leg in zip(MULTI_SYMBOLS, legs)},
+        "exit_reasons": sorted({t["exit_reason"] for t in trades}),
+        "exit_bars": [t["exit_bar"] for t in trades],
+        "oracle_total_return": float(expected["total_return"]),
+        "oracle_total_fees": float(true_fees),
+        "provider_total_fees": (run["response"]["data"].get("statistics") or {}).get("totalFees"),
+        "periods_per_year": measured["periods_per_year"],
+        "oracle_sharpe_as_stated_by_provider": float(measured["sharpe"]),
+        "oracle_sharpe_arithmetic_mean_convention": float(measured["conventional_sharpe"]),
+        "oracle_max_drawdown": float(measured["max_drawdown"]),
+        "network_attempts_denied": run["network_attempts"],
+        "status": "ORIGINAL_PROVIDER_MATCHES_EXACT_ORACLE",
+        **labels,
+    }
+
+
 def run_all(backtesting_dir: Path, python: str = sys.executable, scenarios=None) -> dict:
     results = [run_scenario(backtesting_dir, s, python)
                for s in (scenarios or default_scenarios() + stop_scenarios() + metric_scenarios())]
+    if scenarios is None:
+        results += [run_multi_asset_scenario(backtesting_dir, s, python)
+                    for s in multi_asset_scenarios()]
     return {
         "schema": SCHEMA,
         "source_kind": "SYNTHETIC_FIXTURE_NOT_MARKET_DATA",

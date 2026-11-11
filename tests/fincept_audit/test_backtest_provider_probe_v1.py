@@ -47,11 +47,11 @@ class OriginalProviderAgainstOracleTests(unittest.TestCase):
     def test_every_scenario_matches_the_exact_oracle(self):
         result = self.result
         self.assertEqual(result["schema"], "kairos_fincept_backtest_provider_probe_v1")
-        self.assertEqual(result["scenario_count"], 17)
+        self.assertEqual(result["scenario_count"], 20)
         names = [s["scenario"] for s in result["scenarios"]]
-        self.assertEqual(names, [s["name"] for s in probe.default_scenarios() +
-                                 probe.stop_scenarios() + probe.metric_scenarios()])
-        self.assertEqual(len(set(names)), 17)
+        self.assertEqual(names, [s["name"] for s in probe.default_scenarios() + probe.stop_scenarios() +
+                                 probe.metric_scenarios() + probe.multi_asset_scenarios()])
+        self.assertEqual(len(set(names)), 20)
         for scenario in result["scenarios"]:
             with self.subTest(scenario=scenario["scenario"]):
                 self.assertEqual(scenario["status"], "ORIGINAL_PROVIDER_MATCHES_EXACT_ORACLE")
@@ -154,6 +154,67 @@ class OriginalProviderAgainstOracleTests(unittest.TestCase):
                 response["data"][block][key] += 1
                 with self.assertRaises(probe.ProbeError):
                     probe.compare_metrics(response, good)
+
+    def test_multi_asset_runs_match_the_sum_of_per_symbol_oracles(self):
+        by_name = {s["scenario"]: s for s in self.result["scenarios"]}
+        weighted, equal = by_name["multi_asset_75_25"], by_name["multi_asset_equal_weight"]
+        for scenario in (weighted, equal, by_name["multi_asset_75_25_take_profit"]):
+            self.assertEqual(scenario["trades_per_symbol"], {"KAIROSSYNA": 3, "KAIROSSYNB": 4})
+            self.assertEqual(scenario["trades"], 7)
+        # The allocation matters: different weights, different combined return.
+        self.assertNotEqual(weighted["oracle_total_return"], equal["oracle_total_return"])
+        self.assertEqual(by_name["multi_asset_75_25_take_profit"]["exit_reasons"],
+                         ["signal", "take_profit"])
+        # First symbol is the single-asset fixture: its exits are the single-asset ones.
+        self.assertEqual(weighted["exit_bars"][:3], by_name["next_open_costs"]["exit_bars"])
+
+    def test_multi_asset_statistics_report_zero_fees_on_the_pinned_sources(self):
+        # Characterisation of the ORIGINAL code at fork main 7716ee86 (fixed in PR #40):
+        # commissions are charged and listed per trade, but statistics.totalFees is 0.
+        for scenario in self.result["scenarios"]:
+            if not scenario["scenario"].startswith("multi_asset"):
+                continue
+            with self.subTest(scenario=scenario["scenario"]):
+                self.assertGreater(scenario["oracle_total_fees"], 600.0)
+                self.assertEqual(scenario["provider_total_fees"], 0)
+
+    def test_multi_asset_comparison_detects_a_wrong_allocation(self):
+        scenario = probe.multi_asset_scenarios()[0]
+        # The provider is asked for 75/25; an oracle told 75/25 agrees, one told 60/40 does not.
+        run = probe.run_original_provider(BACKTESTING, self._multi_request(scenario))
+        probe.compare(run["response"], self._multi_expected(scenario))
+        with self.assertRaises(probe.ProbeError) as raised:
+            probe.compare(run["response"], self._multi_expected(dict(scenario, weights=["0.6", "0.4"])))
+        self.assertTrue(str(raised.exception).startswith("ORACLE_MISMATCH:"))
+        for bad in (["0.7", "0.2"], ["1", "0"], ["0.5"]):
+            with self.subTest(weights=bad), self.assertRaises(probe.ProbeError) as raised:
+                probe.run_multi_asset_scenario(BACKTESTING, dict(scenario, weights=bad))
+            self.assertEqual(str(raised.exception), "INVALID_MULTI_ASSET_WEIGHTS")
+
+    @staticmethod
+    def _series():
+        return [probe.fixture_for({}), probe.fixture_for({"fixture": probe.SECOND})]
+
+    def _multi_request(self, scenario):
+        series = self._series()
+        request = probe.build_request(series[0], scenario)
+        request["symbols"] = list(probe.MULTI_SYMBOLS)
+        request["brokerCandles"] = {
+            s: [{"t": r["t"], "o": float(r["o"]), "h": float(r["h"]), "l": float(r["l"]),
+                 "c": float(r["c"]), "v": r["v"]} for r in rows]
+            for s, rows in zip(probe.MULTI_SYMBOLS, series)}
+        request["weights"] = [float(Fraction(w)) for w in scenario["weights"]]
+        return request
+
+    def _multi_expected(self, scenario):
+        legs = [oracle.simulate(rows, fast=5, slow=20, commission="0.001", slippage="0.0005",
+                                initial_capital=str(Fraction(100000) * Fraction(w)))
+                for rows, w in zip(self._series(), scenario["weights"])]
+        equity = [a + b for a, b in zip(legs[0]["equity"], legs[1]["equity"])]
+        trades = [dict(t, symbol=s) for s, leg in zip(probe.MULTI_SYMBOLS, legs) for t in leg["trades"]]
+        return {"bars": 160, "times": legs[0]["times"], "equity": equity, "trades": trades,
+                "final_capital": equity[-1], "total_fees": Fraction(0),
+                "total_return": equity[-1] / 100000 - 1}
 
     def test_result_carries_the_probe_labels_not_the_provider_ones(self):
         result = self.result
@@ -266,7 +327,7 @@ class PinnedSourceTests(unittest.TestCase):
             finally:
                 probe.FIXTURE_SHA256[key] = original
         self.assertEqual(sorted(probe.FIXTURE_SHA256),
-                         ["130", "160", "160/shock53x500", "160/weekdays"])
+                         ["130", "160", "160/second", "160/shock53x500", "160/weekdays"])
 
 
 class ChildIsolationTests(unittest.TestCase):

@@ -99,6 +99,23 @@ class OriginalTechnicalFunctionTests(unittest.TestCase):
                 run_all(SOURCE)
         self.assertIs(socket.socket.connect_ex, original_connect_ex)
 
+    def test_historical_infinity_denied_even_when_last_bar_finite(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+        import numpy as np
+
+        def corrupt(data):
+            result = data.copy(deep=True)
+            for i in range(21):
+                result[f"indicator_{i}"] = 1.0
+            result.loc[0, "indicator_0"] = np.inf
+            return result
+
+        fake = SimpleNamespace(calculate_all_volatility_indicators=corrupt)
+        with patch("tools.fincept_audit.technical_family_probe_v1._load_pinned_module", return_value=fake):
+            with self.assertRaisesRegex(TechnicalProbeError, "INFINITE_INDICATOR_HISTORY:volatility:indicator_0"):
+                run_all(SOURCE)
+
     def test_source_pin_tamper_denied(self):
         with TemporaryDirectory() as dir:
             temp = Path(dir)

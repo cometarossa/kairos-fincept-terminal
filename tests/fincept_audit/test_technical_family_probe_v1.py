@@ -81,6 +81,24 @@ class OriginalTechnicalFunctionTests(unittest.TestCase):
         self.assertIs(socket.socket.connect_ex, original_connect_ex)
         self.assertIs(socket.create_connection, original_create_connection)
 
+    def test_connect_ex_denied_and_guard_restored(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        original_connect_ex = socket.socket.connect_ex
+
+        def attempt_network(data):
+            # Use a socket API distinct from create_connection; no actual
+            # connection is permitted by the probe's guard.
+            with socket.socket() as sock:
+                sock.connect_ex(("127.0.0.1", 1))
+
+        fake = SimpleNamespace(calculate_all_volatility_indicators=attempt_network)
+        with patch("tools.fincept_audit.technical_family_probe_v1._load_pinned_module", return_value=fake):
+            with self.assertRaisesRegex(TechnicalProbeError, "NETWORK_ATTEMPT_DENIED"):
+                run_all(SOURCE)
+        self.assertIs(socket.socket.connect_ex, original_connect_ex)
+
     def test_source_pin_tamper_denied(self):
         with TemporaryDirectory() as dir:
             temp = Path(dir)

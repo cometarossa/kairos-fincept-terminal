@@ -71,7 +71,7 @@ numbers with anyone else's:
 | Average / largest win and loss, expectancy | trade P&L divided by the **initial capital**, not per-trade return |
 | Losing trade | P&L ≤ 0 (a break-even trade counts as losing) |
 
-On these fixtures the CAGR-based Sharpe is between 0.5 % and 22 % away from
+On these fixtures the CAGR-based Sharpe is between 0.3 % and 22.5 % away from
 the arithmetic-mean convention (for example 8.26 against 6.74). **A Fincept
 Sharpe must not be compared with a KAIROS or textbook Sharpe without
 converting.** This is a convention, not an arithmetic error.

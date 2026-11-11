@@ -1,5 +1,6 @@
 """Static-only protection of Fincept's original file-manager callback."""
 from pathlib import Path
+import re
 import unittest
 
 SOURCE = Path(__file__).resolve().parents[2] / "fincept-qt/src/app/WindowFrame_Setup.cpp"
@@ -11,6 +12,8 @@ def preserved(text):
     if start < 0 or end < 0:
         return False
     body = text[start:end]
+    # Comments cannot satisfy a source-preservation contract.
+    body = re.sub(r"/\*.*?\*/|//[^\n]*", "", body, flags=re.DOTALL)
     tokens = (
         "new screens::FileManagerScreen;",
         "&screens::FileManagerScreen::open_file_in_screen",
@@ -38,6 +41,17 @@ class FileManagerSourceContractTests(unittest.TestCase):
             with self.subTest(before=before):
                 self.assertIn(before, original)
                 self.assertFalse(preserved(original.replace(before, after, 1)))
+
+    def test_commented_out_navigation_rejected(self):
+        original = SOURCE.read_text(encoding="utf-8-sig")
+        self.assertTrue(preserved(original))
+        altered = original.replace(
+            "dock_router_->navigate(route_id);",
+            "// dock_router_->navigate(route_id);",
+            1,
+        )
+        self.assertNotEqual(altered, original)
+        self.assertFalse(preserved(altered))
 
     def test_opt_in_factory_allowed(self):
         original = SOURCE.read_text(encoding="utf-8-sig")

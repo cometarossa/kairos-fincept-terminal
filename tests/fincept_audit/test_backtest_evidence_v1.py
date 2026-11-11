@@ -229,7 +229,7 @@ class RealProbeEnvelopeTests(unittest.TestCase):
     def test_real_probe_run_packages_into_a_valid_envelope(self):
         result = probe.run_all(ROOT / probe.BACKTESTING_RELATIVE)
         envelope = evidence.build(result)
-        self.assertEqual(envelope["result"]["scenario_count"], 17)
+        self.assertEqual(envelope["result"]["scenario_count"], 20)
         self.assertEqual([s["name"] for s in envelope["result"]["scenarios"]],
                          [s["scenario"] for s in result["scenarios"]])
         self.assertIs(envelope["result"]["provider_flags_fixture_as_market_data"], True)

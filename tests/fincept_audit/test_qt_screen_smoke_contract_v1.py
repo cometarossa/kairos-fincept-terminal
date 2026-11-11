@@ -71,4 +71,3 @@ class ScreenSmokeSourceSafetyTests(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
-[executed on device: iMac-3.local (7ee641a1-2c6a-4142-9db0-28fef901d728)]

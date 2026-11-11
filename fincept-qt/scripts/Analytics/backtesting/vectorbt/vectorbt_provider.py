@@ -185,6 +185,7 @@ class VectorBTProvider(BacktestingProviderBase):
                 per_symbol_records = []  # per-symbol trade DataFrames -> combined trade stats
                 per_symbol_equity = {}
                 combined_equity_values = None
+                combined_fees = 0.0  # commission charged across all per-symbol simulations
 
                 for i, sym_col in enumerate(col_symbols):
                     sym_series = close_df[sym_col].dropna()
@@ -209,6 +210,12 @@ class VectorBTProvider(BacktestingProviderBase):
 
                     sym_equity = sym_portfolio.value()
                     per_symbol_equity[sym_col] = sym_equity
+                    try:
+                        sym_fees = float(sym_portfolio.total_fees())
+                        if np.isfinite(sym_fees):
+                            combined_fees += sym_fees
+                    except Exception:
+                        pass  # custom-code portfolios may not expose fees
 
                     if combined_equity_values is None:
                         combined_equity_values = sym_equity.copy()
@@ -237,6 +244,7 @@ class VectorBTProvider(BacktestingProviderBase):
                     combined_equity_values, initial_capital,
                     trade_records=(pd.concat(per_symbol_records, ignore_index=True)
                                    if per_symbol_records else None),
+                    total_fees_value=combined_fees,
                 )
 
                 portfolio = combined_portfolio

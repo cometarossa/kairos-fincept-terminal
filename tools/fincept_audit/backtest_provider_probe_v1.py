@@ -57,9 +57,13 @@ PINNED_SOURCES = {
 # built with libm sin(); if a platform rounds a cent differently the run stops
 # instead of silently comparing on different data.
 FIXTURE_SHA256 = {
-    130: "8d5947c974752a706fc7b47f8cff3884fe886fed580d21ea5658b26935cf04dd",
-    160: "96228c052d7daeb8da5f079ac1c221c0db4fe7971a25487f6bb3d2f1a7ca1a4e",
+    "160": "96228c052d7daeb8da5f079ac1c221c0db4fe7971a25487f6bb3d2f1a7ca1a4e",
+    "130": "8d5947c974752a706fc7b47f8cff3884fe886fed580d21ea5658b26935cf04dd",
+    "160/shock53x500": "6f9d2f5d04801dc64e160faa0a19ceaa48ce52cdd297538f5e1602bbe0325d46",
 }
+SHOCK = {"bars": 160, "shock_bar": 53, "shock_cents": 500}
+# oracle argument -> provider request key (both are fractions of price)
+STOP_KEYS = {"stop_loss": "stopLoss", "take_profit": "takeProfit", "trailing_stop": "trailingStop"}
 SYMBOL = "KAIROSSYNTH"
 DATA_SOURCE_TAG = "kairos_synthetic_fixture"
 REL_TOL = 1e-9
@@ -121,6 +125,40 @@ def default_scenarios():
     ]
 
 
+def stop_scenarios():
+    """Stop-loss, take-profit and trailing stop, alone, combined and in both execution modes.
+
+    The shock fixture drops the price by 5.00 two bars after an entry so that a
+    3% stop-loss exits four bars before the crossover would.
+    """
+    costs = {"fast": 5, "slow": 20, "commission": "0.001", "slippage": "0.0005"}
+    return [
+        dict(costs, name="stop_loss_after_shock", fixture=SHOCK, stop_loss="0.03"),
+        dict(costs, name="stop_loss_after_shock_same_close", fixture=SHOCK, stop_loss="0.03",
+             execution="same_close"),
+        dict(costs, name="take_profit", take_profit="0.03"),
+        dict(costs, name="take_profit_60pct", take_profit="0.02", sizing_value="60"),
+        dict(costs, name="trailing_stop", trailing_stop="0.01"),
+        dict(costs, name="trailing_stop_same_close", trailing_stop="0.01", execution="same_close"),
+        dict(costs, name="all_three_after_shock", fixture=SHOCK, stop_loss="0.03",
+             take_profit="0.06", trailing_stop="0.04"),
+        dict(costs, name="stop_loss_ties_with_signal", stop_loss="0.005"),
+    ]
+
+
+def fixture_for(scenario: dict):
+    """Build the scenario's candles and refuse them unless their hash is pinned."""
+    spec = dict(scenario.get("fixture") or {"bars": scenario.get("bars", 160)})
+    key = str(spec["bars"])
+    if spec.get("shock_bar") is not None:
+        key += "/shock%dx%d" % (spec["shock_bar"], spec["shock_cents"])
+    candles = oracle.synthetic_candles(**spec)
+    digest = sha256(json.dumps(candles, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+    if FIXTURE_SHA256.get(key) != digest:
+        raise ProbeError("SYNTHETIC_FIXTURE_DRIFT:" + key)
+    return candles
+
+
 def _verify_sources(backtesting_dir: Path) -> None:
     for relative, expected in PINNED_SOURCES.items():
         path = backtesting_dir / relative
@@ -144,6 +182,8 @@ def build_request(candles, scenario: dict) -> dict:
         "positionSizing": scenario.get("sizing_mode", "percent"),
         "positionSizeValue": float(Fraction(scenario.get("sizing_value", "100"))),
         "execution": scenario.get("execution", "next_open"),
+        **{key: float(Fraction(scenario[name])) for name, key in STOP_KEYS.items()
+           if scenario.get(name) is not None},
         "brokerDataSource": DATA_SOURCE_TAG,
         "brokerCandles": {SYMBOL: [
             {"t": row["t"], "o": float(row["o"]), "h": float(row["h"]),
@@ -257,18 +297,15 @@ def compare(response: dict, expected: dict) -> dict:
 
 
 def run_scenario(backtesting_dir: Path, scenario: dict, python: str = sys.executable) -> dict:
-    bars = scenario.get("bars", 160)
-    candles = oracle.synthetic_candles(bars=bars)
-    digest = sha256(json.dumps(candles, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-    if FIXTURE_SHA256.get(bars) != digest:
-        raise ProbeError("SYNTHETIC_FIXTURE_DRIFT:%d" % bars)
+    candles = fixture_for(scenario)
     expected = oracle.simulate(
         candles, fast=scenario["fast"], slow=scenario["slow"],
         initial_capital=scenario.get("initial_capital", "100000"),
         commission=scenario.get("commission", "0"), slippage=scenario.get("slippage", "0"),
         sizing_mode=scenario.get("sizing_mode", "percent"),
         sizing_value=scenario.get("sizing_value", "100"),
-        execution=scenario.get("execution", "next_open"))
+        execution=scenario.get("execution", "next_open"),
+        **{name: scenario.get(name) for name in STOP_KEYS})
     if not expected["trades"]:
         raise ProbeError("SCENARIO_HAS_NO_TRADES:" + scenario["name"])
     run = run_original_provider(backtesting_dir, build_request(candles, scenario), python)
@@ -278,6 +315,7 @@ def run_scenario(backtesting_dir: Path, scenario: dict, python: str = sys.execut
         "bars": expected["bars"],
         "trades": len(expected["trades"]),
         "exit_reasons": sorted({t["exit_reason"] for t in expected["trades"]}),
+        "exit_bars": [t["exit_bar"] for t in expected["trades"]],
         "oracle_total_return": float(expected["total_return"]),
         "oracle_total_fees": float(expected["total_fees"]),
         "network_attempts_denied": run["network_attempts"],
@@ -287,7 +325,8 @@ def run_scenario(backtesting_dir: Path, scenario: dict, python: str = sys.execut
 
 
 def run_all(backtesting_dir: Path, python: str = sys.executable, scenarios=None) -> dict:
-    results = [run_scenario(backtesting_dir, s, python) for s in (scenarios or default_scenarios())]
+    results = [run_scenario(backtesting_dir, s, python)
+               for s in (scenarios or default_scenarios() + stop_scenarios())]
     return {
         "schema": SCHEMA,
         "source_kind": "SYNTHETIC_FIXTURE_NOT_MARKET_DATA",

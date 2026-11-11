@@ -18,21 +18,33 @@ runs its own numpy loop (`vbt_portfolio._simulate_signals`). That is why a
 separate comparison with the real library is included.
 
 Input: deterministic synthetic daily candles (two-decimal prices, sha256-pinned)
-passed through the provider's existing `brokerCandles` input. Six scenarios:
-no costs; commission + slippage; 40 % sizing; fixed-amount sizing; `same_close`
-execution; a position still open on the last bar.
+passed through the provider's existing `brokerCandles` input. Fourteen
+scenarios. Six without stops: no costs; commission + slippage; 40 % sizing;
+fixed-amount sizing; `same_close` execution; a position still open on the last
+bar. Eight with stops: stop-loss after a 5.00 downward step (both execution
+modes), take-profit (two sizings), trailing stop (both execution modes), all
+three together, and a stop-loss that ties with the crossover exit.
 
 ## Result
 
 - Provider vs oracle: every equity point, every trade (dates, prices, size, P&L,
   fees, exit reason), final capital, total fees and total return agree within
-  relative 1e-9 in all six scenarios.
+  relative 1e-9 in all fourteen scenarios, including the exit reason
+  (`signal`, `stop_loss`, `take_profit`, `trailing_stop`, `end_of_data`).
 - Real VectorBT vs oracle: the equity curve agrees within relative 1e-9 in the
   four scenarios vectorbt can express the same way (all-in sizing, flat at the
   end).
 - The oracle itself is checked against numbers worked out by hand in the tests.
 - The comparison is shown to fail on a wrong commission, slippage, sizing,
-  execution model, and on tampered provider output.
+  execution model, a missing or wrong stop, and on tampered provider output.
+
+Stop semantics confirmed in the original simulator: stops are judged on each
+bar's close from the fill bar onwards against the actual entry fill (slippage
+included) and exit at the next open; the trailing peak starts at the entry
+fill; precedence is stop-loss, take-profit, trailing stop, and any stop
+outranks a signal exit on the same bar. Consequence worth knowing: because the
+check uses the close and the fill is the next open, a "stop-loss" exit can
+fill above the entry price, and a stop is never filled at its own level.
 
 ## Two findings about the original provider (characterised, not changed)
 
@@ -54,7 +66,7 @@ execution; a position still open on the last bar.
 - The child runs with `-I -B` and an empty `pycache_prefix`: a stale `.pyc`
   beside a source is not executed and nothing is written back (tested).
 - Python socket connections are denied and counted in the child; the six runs
-  made none. The child gets a minimal environment (tested with a canary).
+  made none (fourteen runs). The child gets a minimal environment (tested with a canary).
 
 This is a Python-level harness, not an OS sandbox.
 
@@ -74,12 +86,12 @@ Observed on 2026-11-11 (Linux, Python 3.13):
 
 | Interpreter | Result |
 |---|---|
-| numpy 2.5.4, pandas 2.3.3 (Fincept numpy2 pins), no vectorbt | 29 passed, 2 skipped |
-| numpy 2.5.4, pandas 3.1.1, vectorbt 0.28.2, plotly 5.24.1 | 31 passed |
+| numpy 2.5.4, pandas 2.3.3 (Fincept numpy2 pins), no vectorbt | 39 passed, 2 skipped |
+| numpy 2.5.4, pandas 3.1.1, vectorbt 0.28.2, plotly 5.24.1 | 41 passed |
 
 ## Not covered
 
-Stops, trailing stops, Kelly / volatility / risk sizing, multi-asset, the other
+Kelly / volatility / risk sizing, intrabar stop fills, multi-asset, the other
 strategies, optimisation, walk-forward, the metrics block (Sharpe, drawdown…),
 the yfinance path, the Qt screen, and anything about real markets. The second
 interpreter is not Fincept's pinned pandas. Fork Actions are disabled: these are

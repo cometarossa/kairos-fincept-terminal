@@ -204,9 +204,12 @@ void PortfolioScreen::on_market_analytics(bool ok, const QString& error) {
                       .arg(svc.risk_free_source());
     if (!a.missing.isEmpty())
         tip += tr("\nNo price history (excluded): %1").arg(a.missing.join(QStringLiteral(", ")));
+    if (!a.warnings.isEmpty())
+        tip += tr("\nData quality notes:\n%1").arg(a.warnings.join(QStringLiteral("\n")));
     if (!ok)
         tip += tr("\nLatest refresh failed — showing the previous result: %1").arg(error);
-    status_bar_->set_analytics_note(tr("RISK DATA %1").arg(a.as_of), tip, !ok || !a.missing.isEmpty());
+    status_bar_->set_analytics_note(tr("RISK DATA %1").arg(a.as_of), tip,
+                                    !ok || !a.missing.isEmpty() || !a.warnings.isEmpty());
 
     if (summary_loaded_)
         svc.compute_metrics(current_summary_);

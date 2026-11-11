@@ -256,6 +256,8 @@ def analytics(payload):
         r = r[np.isfinite(r)]
         if len(r) >= 2:
             rets[s] = r
+        else:
+            warnings.append(f"{s}: fewer than 2 finite returns; excluded from risk estimates")
     priced = [s for s in priced if s in rets]
     if not priced:
         result["correlation"] = {"window": corr_window, "matrix": {}}
@@ -302,7 +304,16 @@ def analytics(payload):
     if len(window_df) < MIN_RISK_OBS:
         window_df = rets_df
         warnings.append("short shared history — earliest listings padded with zero returns")
-    filled = window_df.fillna(0.0)  # a closed market is a zero-return day for that line
+    # Preserve the existing numerical convention, but disclose it: without an
+    # exchange calendar, an absent return could also be a provider gap/stale tail.
+    for s in priced:
+        padded = int(window_df[s].isna().sum())
+        if padded:
+            warnings.append(
+                f"{s}: {padded} missing return observations treated as zero; "
+                "calendar/data completeness unverified"
+            )
+    filled = window_df.fillna(0.0)
     port = filled[priced].dot(w[priced].values)
 
     ppy = _periods_per_year(port.index)

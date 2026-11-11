@@ -128,3 +128,73 @@ calendar or source freshness certification exists in this input contract.
 Next small code increment: disclose missing-return padding and insufficient-return
 exclusion, preserving all numerical formulas; submit separately above this audit.
 The native GUI/real provider/independent-review gates remain open.
+
+## Third increment — candidate disclosure correction (separate draft)
+
+Dependency: audit PR #27, exact parent
+`60b5a74705afdff3b3f4c4a29fa51c5365b9bfb6`; #27 itself depends on #26.
+This is a **review candidate**, not an installed fix. Unlike the preceding
+source-preservation audit, this increment deliberately changes two application
+files for the reproduced disclosure defects:
+
+- `fincept-qt/scripts/portfolio_metrics.py`: append warnings for holdings with
+  fewer than two finite returns, and count missing return observations actually
+  zero-filled in the chosen calculation window. The warning states calendar/data
+  completeness is unverified; it never labels every gap a market closure or outage.
+- `fincept-qt/src/screens/portfolio/PortfolioScreen_Handlers.cpp`: pass existing
+  `a.warnings` to the existing risk tooltip and warning color. The service already
+  parses warnings but previously only logged them. No new widget/layout/provider.
+
+No formula, allocation, coverage value, timestamp, return window or error schema
+changes. No suppression of existing warnings. Coverage continues to mean weighted
+holding coverage, not temporal completeness. The intended visible behavior is a
+warning-colored existing risk note with the quality notes in its tooltip.
+**This visible behavior is source-wired but not GUI-runtime-verified.**
+
+### Red/green evidence and compatibility
+
+Nine new current-source tests were written before the patch: **six failed** on
+missing disclosure/UI wiring, three passed. After the correction all nine pass.
+One of them runs nine input scenarios through both original and current modules
+and requires **exact equality of the entire output except warnings**; it also
+requires every old warning to survive. Scenarios: complete, constant, globally
+short, sufficient shared history, insufficient shared history, stale tail,
+one-return exclusion, internal gap, entirely absent holding.
+
+The 20 original numerical/characterization tests still execute **original source**
+from fixed Git commit `7716ee8613249fb44c4d14036c5bc16ed6f34e97`, hash-verified
+before execution. They do not silently switch their original pin to the patched
+file. The nine new tests execute **current source**. Both use the same pinned
+original JSON helper and synthetic download boundary. All combined tests:
+**42/42 PASS** (20 original + 9 candidate + 13 inherited preservation/technicals).
+The one Qt source test is explicitly not a compilation or GUI test.
+
+Reproduction requires Git and the pinned baseline commit locally available in
+addition to the previously listed Python dependencies. For a shallow checkout
+missing that object, fetch that exact public Fincept commit first; absence must
+fail rather than skip the original/candidate comparison.
+
+### Remaining gates and risks
+
+- **Qt build/GUI acceptance BLOCKED in this environment:** CMake not on PATH;
+  the available `/usr/bin/qmake` wrapper fails because its Qt5 executable does
+  not exist. The project requests Qt6 6.8.x. No global toolchain installation,
+  installed application mutation or alternate GUI evidence claimed.
+- Existing preserved source registry checks pass; no screens/widgets/presets
+  removed. Portfolio behavior changes only in disclosure, pending native review.
+- A legitimate mixed exchange calendar also produces the warning. This is
+  intentional uncertainty disclosure; no calendar inference or error assertion.
+- Gaps shared by every holding may not create a row in the union return index;
+  this patch cannot certify temporal completeness or detect all provider gaps.
+- Warnings do not repair historical return alignment, freshness or point-in-time
+  evidence. PM-01/02/03 scientific admission remains BLOCKED. PM-02/04 disclosure
+  corrected in candidate source only; runtime acceptance remains NOT_VERIFIED.
+- Independent review, fork GitHub CI and original/hybrid GUI comparisons remain
+  NOT_VERIFIED. No auto-merge or deploy, credentials, broker, paid API, service,
+  runner, security setting, license or original user profile changes.
+
+Rollback: revert this candidate commit; no data migration or runtime state.
+Next gate: independent review plus a native Qt6 build and isolated risk-tooltip
+smoke, including clean history, missing history and failed refresh. A subsequent
+calendar-aware methodology change needs its own specification and independent
+numerical validation; it must not be smuggled into this disclosure-only fix.

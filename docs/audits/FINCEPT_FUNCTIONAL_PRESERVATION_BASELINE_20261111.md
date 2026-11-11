@@ -1,5 +1,19 @@
 # Fincept × KAIROS — Original Function Preservation Baseline V1
 
+## Independent numeric oracles — later additive checkpoint (2026-11-11)
+
+A subsequent small test-only increment extends the **existing** DRAFT PR #26; it does not edit Fincept application source. The extra `tests/fincept_audit/test_indicator_numeric_oracle_v1.py` executes four new independent arithmetic comparisons against byte-pinned original Fincept technical modules using the same 180-bar synthetic OHLCV fixture:
+
+- `others`: daily arithmetic return, log return and cumulative return, calculated independently with stdlib `math` at four positions;
+- `momentum` ROC(12) and `trend` SMA(20), including warm-up NaN checks;
+- `volatility` Bollinger average/upper/lower bands (population standard deviation) and Donchian 20-bar high/low;
+- `volume` VWAP(14), independently computed as a direct typical-price weighted sum, with warm-up NaN check.
+
+After reconciling concurrently added baseline-integrity tests and their updated comparison helper from the current PR head, the **full updated suite is 20/20 PASS on an isolated iMac source snapshot**, and Python `compileall` PASS. Composition: 12 source-preservation/manifest-integrity tests, four original-family execution tests, four independent numeric oracle tests. This includes regression guards for baseline truncation, order mismatch and invented runtime-status claims. Tests cover sampled calculations with pinned local `pandas`/`ta` dependencies, not all indicator semantics or installed Qt GUI behavior. The Fincept fork GitHub Actions remain disabled: **NO GitHub-hosted CI success claim**; no real market data, broker action, API logins or scientific admission.
+
+The earlier 13/13 value in this audit is retained as the dated *initial* checkpoint, not the latest total.
+
+
 **Date:** 2026-11-11 Europe/Rome. **Owner requirement:** retain the **working majority of native Fincept Terminal functions**, not just its look-and-feel. KAIROS must be additive, optional and incapable of breaking Fincept's existing work. This baseline provides a measurable **source-regression guard plus selected real functional probes**, not a full Qt GUI functional certification.
 
 **Canonical pinned fork baseline:** `cometarossa/kairos-fincept-terminal` `main` @ `7716ee8613249fb44c4d14036c5bc16ed6f34e97`. No Fincept application source changed in this PR. Fincept fork GitHub Actions remain disabled; results below are local Mac tests, not CI. Prior VM findings below are quoted as **dated historical evidence**, not freshly repeated VM GUI tests.

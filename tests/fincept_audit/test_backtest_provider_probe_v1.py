@@ -47,10 +47,11 @@ class OriginalProviderAgainstOracleTests(unittest.TestCase):
     def test_every_scenario_matches_the_exact_oracle(self):
         result = self.result
         self.assertEqual(result["schema"], "kairos_fincept_backtest_provider_probe_v1")
-        self.assertEqual(result["scenario_count"], 14)
+        self.assertEqual(result["scenario_count"], 17)
         names = [s["scenario"] for s in result["scenarios"]]
-        self.assertEqual(names, [s["name"] for s in probe.default_scenarios() + probe.stop_scenarios()])
-        self.assertEqual(len(set(names)), 14)
+        self.assertEqual(names, [s["name"] for s in probe.default_scenarios() +
+                                 probe.stop_scenarios() + probe.metric_scenarios()])
+        self.assertEqual(len(set(names)), 17)
         for scenario in result["scenarios"]:
             with self.subTest(scenario=scenario["scenario"]):
                 self.assertEqual(scenario["status"], "ORIGINAL_PROVIDER_MATCHES_EXACT_ORACLE")
@@ -97,6 +98,62 @@ class OriginalProviderAgainstOracleTests(unittest.TestCase):
             with self.subTest(wrong=wrong):
                 with self.assertRaises(probe.ProbeError):
                     probe.compare(run["response"], oracle.simulate(candles, **base, **wrong))
+
+    def test_annualisation_basis_follows_the_calendar_of_the_bars(self):
+        by_name = {s["scenario"]: s for s in self.result["scenarios"]}
+        self.assertEqual(by_name["next_open_costs"]["periods_per_year"], 365)
+        self.assertEqual(by_name["weekday_calendar_252"]["periods_per_year"], 252)
+        # Same prices and trades, different calendar: only annualised figures move.
+        self.assertEqual(by_name["weekday_calendar_252"]["oracle_total_return"],
+                         by_name["next_open_costs"]["oracle_total_return"])
+        self.assertEqual(by_name["weekday_calendar_252"]["oracle_max_drawdown"],
+                         by_name["next_open_costs"]["oracle_max_drawdown"])
+        self.assertLess(by_name["weekday_calendar_252"]["oracle_sharpe_as_stated_by_provider"],
+                        by_name["next_open_costs"]["oracle_sharpe_as_stated_by_provider"])
+        self.assertLess(by_name["risk_free_4pct"]["oracle_sharpe_as_stated_by_provider"],
+                        by_name["next_open_costs"]["oracle_sharpe_as_stated_by_provider"])
+
+    def test_provider_sharpe_is_cagr_based_not_the_arithmetic_mean_convention(self):
+        # Characterisation: the two conventions differ by several percent here, so
+        # a Fincept Sharpe must not be compared with one computed the usual way.
+        for scenario in self.result["scenarios"]:
+            stated = scenario["oracle_sharpe_as_stated_by_provider"]
+            usual = scenario["oracle_sharpe_arithmetic_mean_convention"]
+            with self.subTest(scenario=scenario["scenario"]):
+                self.assertGreater(abs(stated - usual) / abs(usual), 1e-3)
+
+    def test_metric_comparison_detects_wrong_values_and_wrong_conventions(self):
+        from tools.fincept_audit import backtest_metrics_oracle_v1 as metrics_oracle
+        expected = expected_for(COSTS)
+        good = metrics_oracle.metrics(expected["equity"], expected["trades"], Fraction(100000), 365)
+        probe.compare_metrics(self.costs_run["response"], good)
+        wrong_inputs = {
+            "252-bar year": metrics_oracle.metrics(expected["equity"], expected["trades"],
+                                                   Fraction(100000), 252),
+            "risk-free rate": metrics_oracle.metrics(expected["equity"], expected["trades"],
+                                                     Fraction(100000), 365, Fraction(1, 100)),
+            "arithmetic Sharpe": dict(good, sharpe=good["conventional_sharpe"]),
+            "dropped trade": metrics_oracle.metrics(expected["equity"], expected["trades"][1:],
+                                                    Fraction(100000), 365),
+        }
+        for name, wrong in wrong_inputs.items():
+            with self.subTest(wrong=name):
+                with self.assertRaises(probe.ProbeError):
+                    probe.compare_metrics(self.costs_run["response"], wrong)
+        for block, key in (("performance", "sharpeRatio"), ("performance", "maxDrawdown"),
+                           ("performance", "averageWin"), ("statistics", "bestDay"),
+                           ("statistics", "averageDailyReturn")):
+            with self.subTest(tampered=key):
+                response = copy.deepcopy(self.costs_run["response"])
+                response["data"][block][key] *= 1.000001
+                with self.assertRaises(probe.ProbeError):
+                    probe.compare_metrics(response, good)
+        for block, key in (("performance", "winningTrades"), ("statistics", "losingDays")):
+            with self.subTest(tampered=key):
+                response = copy.deepcopy(self.costs_run["response"])
+                response["data"][block][key] += 1
+                with self.assertRaises(probe.ProbeError):
+                    probe.compare_metrics(response, good)
 
     def test_result_carries_the_probe_labels_not_the_provider_ones(self):
         result = self.result
@@ -208,7 +265,8 @@ class PinnedSourceTests(unittest.TestCase):
                 self.assertEqual(str(raised.exception), "SYNTHETIC_FIXTURE_DRIFT:" + key)
             finally:
                 probe.FIXTURE_SHA256[key] = original
-        self.assertEqual(sorted(probe.FIXTURE_SHA256), ["130", "160", "160/shock53x500"])
+        self.assertEqual(sorted(probe.FIXTURE_SHA256),
+                         ["130", "160", "160/shock53x500", "160/weekdays"])
 
 
 class ChildIsolationTests(unittest.TestCase):
@@ -313,6 +371,17 @@ class RequestTests(unittest.TestCase):
         stops = probe.build_request(candles, dict(COSTS, stop_loss="0.03", trailing_stop="0.04"))
         self.assertEqual((stops["stopLoss"], stops["trailingStop"]), (0.03, 0.04))
         self.assertNotIn("takeProfit", stops)
+        self.assertNotIn("riskFreeRate", stops)
+        self.assertEqual(probe.build_request(candles, dict(COSTS, risk_free_rate="0.04"))["riskFreeRate"], 0.04)
+
+    def test_weekday_fixture_skips_weekends_and_keeps_the_same_prices(self):
+        from datetime import datetime, timezone
+        plain = oracle.synthetic_candles(160)
+        weekdays = oracle.synthetic_candles(160, weekdays_only=True)
+        self.assertEqual([r["c"] for r in weekdays], [r["c"] for r in plain])
+        days = [datetime.fromtimestamp(r["t"], tz=timezone.utc).weekday() for r in weekdays]
+        self.assertEqual(set(days), {0, 1, 2, 3, 4})
+        self.assertEqual(days[:6], [0, 1, 2, 3, 4, 0])
 
 
 if __name__ == "__main__":

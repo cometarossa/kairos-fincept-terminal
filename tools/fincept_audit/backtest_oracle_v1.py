@@ -48,12 +48,14 @@ class OracleRefused(ValueError):
 
 def synthetic_candles(bars: int = 160, drift_cents: int = 5, wave: float = 6.0,
                       wave_period: float = 9.0, base: float = 100.0,
-                      shock_bar=None, shock_cents: int = 0):
+                      shock_bar=None, shock_cents: int = 0, weekdays_only: bool = False):
     """Deterministic synthetic daily OHLCV with two-decimal prices as strings.
 
     Shape only: a drift plus a sine wave so that an SMA crossover trades a few
     times, optionally with one downward level shift of `shock_cents` from
-    `shock_bar` on (to make a stop-loss fire). It encodes no market behaviour.
+    `shock_bar` on (to make a stop-loss fire). With `weekdays_only` the bars
+    skip Saturdays and Sundays, like an exchange calendar without holidays.
+    It encodes no market behaviour.
     """
     if not 30 <= bars <= 2000:
         raise OracleRefused("BARS_OUT_OF_RANGE")
@@ -61,13 +63,18 @@ def synthetic_candles(bars: int = 160, drift_cents: int = 5, wave: float = 6.0,
                                       and isinstance(shock_cents, int) and 0 < shock_cents < 5000):
         raise OracleRefused("INVALID_SHOCK")
     rows = []
+    day = 0  # 2024-01-01 is a Monday
     for i in range(bars):
+        while weekdays_only and day % 7 in (5, 6):
+            day += 1
+        stamp = EPOCH_2024 + DAY * day
+        day += 1
         close = round(base + drift_cents * i / 100 + wave * math.sin(i / wave_period), 2)
         if shock_bar is not None and i >= shock_bar:
             close = round(close - shock_cents / 100, 2)
         open_ = round(close - 0.3 + 0.2 * math.sin(i / 5), 2)
         rows.append({
-            "t": EPOCH_2024 + DAY * i,
+            "t": stamp,
             "o": f"{open_:.2f}",
             "h": f"{max(open_, close) + 0.8:.2f}",
             "l": f"{min(open_, close) - 0.9:.2f}",

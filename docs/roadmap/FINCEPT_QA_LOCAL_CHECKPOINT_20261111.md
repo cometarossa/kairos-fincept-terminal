@@ -104,3 +104,27 @@ staggered listing history and anticorrelated holdings. Explicitly assess existin
 zero-fill behavior before considering any change; never silently alter formulas.
 In parallel planning, DEV-01/#24 still requires an isolated, compatible native Qt
 toolchain and original/hybrid GUI comparison. Do not create a second KAIROS widget.
+
+## Second increment — incomplete histories and calendar characterization
+
+Eight further tests executed on the unchanged original module: **33/33 total**
+(20 Portfolio tests + 13 inherited). Three additional numerical/behavior oracles
+cover anticorrelation (beta 1/8, risk contributions 4 and -3), a sufficient
+40-return shared window, and an explicit every-second-day calendar convention.
+An all-holdings-absent case verifies no portfolio is fabricated.
+
+Four tests reproduce shortcomings; their PASS means reproduction, NOT acceptance:
+
+| Finding | Reproduced original behavior | Integration verdict |
+|---|---|---|
+| PM-01: short shared history | 10 BETA returns padded into a 60-row portfolio; coverage 1, warning present | BLOCKED for scientific use without a data policy |
+| PM-02: stale tail | BETA ends on Jan 21, portfolio as_of Mar 1, coverage 1, 60 portfolio vs 20 BETA returns, no warning; padding reduces estimated volatility | FAIL disclosure; scientific use BLOCKED |
+| PM-03: internal gap | Missing Jan 31 price becomes zero that day and a two-day return the next; no warning | Calendar/data provenance NOT_VERIFIED; scientific use BLOCKED |
+| PM-04: insufficient prices | Two closes produce one return; BETA disappears from holdings but missing=[] and warnings=[] | FAIL disclosure |
+
+The mixed-calendar oracle proves the current zero-fill convention is implemented
+consistently. It does not prove missing quotes are exchange closures. No complete
+calendar or source freshness certification exists in this input contract.
+Next small code increment: disclose missing-return padding and insufficient-return
+exclusion, preserving all numerical formulas; submit separately above this audit.
+The native GUI/real provider/independent-review gates remain open.

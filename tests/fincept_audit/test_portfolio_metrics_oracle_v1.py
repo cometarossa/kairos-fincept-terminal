@@ -11,6 +11,7 @@ import importlib.util
 import io
 import json
 import math
+import statistics
 from pathlib import Path
 import socket
 import sys
@@ -181,6 +182,109 @@ class PortfolioMetricsOracleTests(unittest.TestCase):
             raise AssertionError(value)
         r = json.loads(output.getvalue(), parse_constant=reject_constant)
         self.assertAlmostEqual(r['portfolio']['beta'], .875, places=12)
+
+    def test_anticorrelation_retains_negative_risk_contribution(self):
+        prices = [100.]
+        for i in range(60):
+            prices.append(prices[-1] * (1 + (.005 if i % 2 == 0 else -.005)))
+        self.data[('BETA', 'Close')] = prices
+        r = self.calculate()
+        # 1/4 * 2 + 3/4 * -1/2 = 1/8 benchmark exposure.
+        self.assertEqual(r['correlation']['matrix']['ALPHA|BETA'], -1.)
+        self.assertAlmostEqual(r['portfolio']['beta'], .125, places=12)
+        self.assertAlmostEqual(r['portfolio']['ann_vol'], .00125 * math.sqrt(60/59*365.25), places=12)
+        self.assertAlmostEqual(r['holdings']['ALPHA']['risk_contribution'], 4., places=10)
+        self.assertAlmostEqual(r['holdings']['BETA']['risk_contribution'], -3., places=10)
+
+    def test_staggered_listing_uses_sufficient_shared_history(self):
+        self.data.loc[self.data.index[:20], ('BETA', 'Close')] = float('nan')
+        r = self.calculate()
+        self.assertEqual(r['portfolio']['observations'], 40)
+        self.assertEqual(r['portfolio']['start'], '2020-01-22')
+        self.assertEqual(r['holdings']['BETA']['observations'], 40)
+        self.assertAlmostEqual(r['portfolio']['ann_vol'], .00875 * math.sqrt(40/39*365.25), places=12)
+        self.assertEqual(r['warnings'], [])
+
+    def test_mixed_calendar_matches_explicit_zero_return_convention(self):
+        # BETA has a fabricated observation every second day. This tests the
+        # existing convention; it cannot establish whether a real gap is a closure.
+        prices, last, beta_returns = [100.], 100., {}
+        for day in range(1, 61):
+            if day % 2:
+                prices.append(float('nan'))
+            else:
+                ret = -.02 if (day // 2) % 2 else .02
+                beta_returns[day] = ret
+                last *= 1 + ret
+                prices.append(last)
+        self.data[('BETA', 'Close')] = prices
+        r = self.calculate()
+        expected = [.25 * (.02 if day % 2 == 0 else -.02)
+                    + .75 * beta_returns.get(day, 0.) for day in range(2, 61)]
+        self.assertEqual(r['portfolio']['observations'], 59)
+        self.assertEqual(r['holdings']['BETA']['observations'], 30)
+        self.assertAlmostEqual(r['portfolio']['ann_vol'], statistics.stdev(expected) * math.sqrt(365.25), places=12)
+        self.assertAlmostEqual(r['holdings']['BETA']['ann_vol'], .02 * math.sqrt(30/29*182.625), places=12)
+
+    def test_short_shared_history_characterizes_padding_warning(self):
+        # Audit finding PM-01: PASS here means behavior reproduced, NOT that
+        # padded observations are scientifically acceptable risk evidence.
+        self.data.loc[self.data.index[:50], ('BETA', 'Close')] = float('nan')
+        r = self.calculate()
+        self.assertEqual(r['portfolio']['observations'], 60)
+        self.assertEqual(r['holdings']['BETA']['observations'], 10)
+        self.assertEqual(r['portfolio']['coverage'], 1.)
+        self.assertIsNotNone(r['portfolio']['ann_vol'])
+        self.assertIn('short shared history — earliest listings padded with zero returns', r['warnings'])
+
+    def test_stale_tail_characterizes_undisclosed_padding(self):
+        # PM-02: coverage is weight coverage, NOT date coverage or freshness.
+        self.data.loc[self.data.index[21:], ('BETA', 'Close')] = float('nan')
+        r = self.calculate()
+        self.assertEqual(r['as_of'], '2020-03-01')
+        self.assertEqual(r['portfolio']['coverage'], 1.)
+        self.assertEqual(r['portfolio']['observations'], 60)
+        self.assertEqual(r['holdings']['BETA']['observations'], 20)
+        self.assertEqual(r['missing'], [])
+        self.assertEqual(r['warnings'], [])
+        expected = [.25 * (.02 if day % 2 == 0 else -.02)
+                    + (.75 * (.005 if day % 2 == 0 else -.005) if day <= 20 else 0.)
+                    for day in range(1, 61)]
+        self.assertAlmostEqual(r['portfolio']['ann_vol'], statistics.stdev(expected) * math.sqrt(365.25), places=12)
+        self.assertLess(r['portfolio']['ann_vol'], .00875 * math.sqrt(60/59*365.25))
+
+    def test_internal_gap_characterizes_multiday_return(self):
+        # PM-03: original cleaning drops the missing close before pct_change.
+        self.data.loc[self.data.index[30], ('BETA', 'Close')] = float('nan')
+        r = self.calculate()
+        self.assertEqual(r['holdings']['BETA']['observations'], 59)
+        self.assertEqual(r['warnings'], [])
+        expected = []
+        for day in range(1, 61):
+            beta = .005 if day % 2 == 0 else -.005
+            if day == 30:
+                beta = 0.
+            elif day == 31:
+                beta = -.000025  # (1+.005)*(1-.005)-1: TWO-day return
+            expected.append(.25 * (.02 if day % 2 == 0 else -.02) + .75 * beta)
+        self.assertAlmostEqual(r['portfolio']['ann_vol'], statistics.stdev(expected) * math.sqrt(365.25), places=12)
+
+    def test_two_closes_characterizes_missing_diagnostic_gap(self):
+        # PM-04: two closes pass 'missing' classification but one return is
+        # subsequently removed from priced holdings without a warning.
+        self.data.loc[self.data.index[2:], ('BETA', 'Close')] = float('nan')
+        r = self.calculate()
+        self.assertEqual(r['missing'], [])
+        self.assertNotIn('BETA', r['holdings'])
+        self.assertEqual(r['portfolio']['coverage'], .25)
+        self.assertEqual(r['warnings'], [])
+
+    def test_all_holdings_absent_returns_no_portfolio(self):
+        self.download.return_value = self.data.drop(columns=['ALPHA', 'BETA'], level=0)
+        r = self.calculate()
+        self.assertIsNone(r['portfolio'])
+        self.assertEqual(r['holdings'], {})
+        self.assertEqual(r['missing'], ['ALPHA', 'BETA'])
 
 
 if __name__ == '__main__':

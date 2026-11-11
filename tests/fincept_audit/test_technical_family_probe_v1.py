@@ -34,6 +34,33 @@ class OriginalTechnicalFunctionTests(unittest.TestCase):
             [[], [], ["psar_down"], [], []],
         )
 
+    def test_mutating_original_ohlcv_denied(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+
+        def corrupt(data):
+            data.loc[0, "close"] += 10
+            return data.assign(fake_indicator=1.0)
+
+        fake = SimpleNamespace(calculate_all_volatility_indicators=corrupt)
+        with patch("tools.fincept_audit.technical_family_probe_v1._load_pinned_module", return_value=fake):
+            with self.assertRaisesRegex(TechnicalProbeError, "ORIGINAL_OHLCV_VALUES_CHANGED:volatility"):
+                run_all(SOURCE)
+
+    def test_output_ohlcv_rewrite_denied(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+
+        def corrupt(data):
+            result = data.copy(deep=True)
+            result.loc[0, "close"] += 10
+            return result.assign(fake_indicator=1.0)
+
+        fake = SimpleNamespace(calculate_all_volatility_indicators=corrupt)
+        with patch("tools.fincept_audit.technical_family_probe_v1._load_pinned_module", return_value=fake):
+            with self.assertRaisesRegex(TechnicalProbeError, "ORIGINAL_OHLCV_VALUES_CHANGED:volatility"):
+                run_all(SOURCE)
+
     def test_source_pin_tamper_denied(self):
         with TemporaryDirectory() as dir:
             temp = Path(dir)

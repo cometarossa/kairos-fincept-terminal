@@ -17,8 +17,15 @@ Model (TOOL-01 scope):
     amount capped at cash.
   * A position still open on the last bar is closed at the last close, with
     exit costs, so equity and the trade list agree.
+  * Stops are fractions of price and are judged on each bar's CLOSE, from the
+    fill bar onwards, against the actual entry fill (slippage included):
+    stop-loss when close <= entry*(1-sl), take-profit when close >=
+    entry*(1+tp), trailing when close <= peak*(1-ts) where peak is the highest
+    close since entry, starting at the entry fill. If several hold on one bar
+    the reported reason is stop_loss, then take_profit, then trailing_stop; a
+    stop outranks a signal exit. The exit then fills like any other order.
 
-Out of scope and refused: stops, kelly, vol_target, risk sizing, shorts,
+Out of scope and refused: kelly, vol_target, risk sizing, shorts,
 multi-asset. A synthetic fixture is NOT market data; nothing here estimates
 edge, and no output is a trading signal.
 """
@@ -40,17 +47,24 @@ class OracleRefused(ValueError):
 
 
 def synthetic_candles(bars: int = 160, drift_cents: int = 5, wave: float = 6.0,
-                      wave_period: float = 9.0, base: float = 100.0):
+                      wave_period: float = 9.0, base: float = 100.0,
+                      shock_bar=None, shock_cents: int = 0):
     """Deterministic synthetic daily OHLCV with two-decimal prices as strings.
 
     Shape only: a drift plus a sine wave so that an SMA crossover trades a few
-    times. It encodes no market behaviour.
+    times, optionally with one downward level shift of `shock_cents` from
+    `shock_bar` on (to make a stop-loss fire). It encodes no market behaviour.
     """
     if not 30 <= bars <= 2000:
         raise OracleRefused("BARS_OUT_OF_RANGE")
+    if shock_bar is not None and not (isinstance(shock_bar, int) and 0 < shock_bar < bars
+                                      and isinstance(shock_cents, int) and 0 < shock_cents < 5000):
+        raise OracleRefused("INVALID_SHOCK")
     rows = []
     for i in range(bars):
         close = round(base + drift_cents * i / 100 + wave * math.sin(i / wave_period), 2)
+        if shock_bar is not None and i >= shock_bar:
+            close = round(close - shock_cents / 100, 2)
         open_ = round(close - 0.3 + 0.2 * math.sin(i / 5), 2)
         rows.append({
             "t": EPOCH_2024 + DAY * i,
@@ -121,7 +135,8 @@ def sma_cross_signals(closes, fast: int, slow: int):
 
 def simulate(candles, *, fast: int, slow: int, initial_capital="100000",
              commission="0", slippage="0", sizing_mode: str = "percent",
-             sizing_value="100", execution: str = "next_open") -> dict:
+             sizing_value="100", execution: str = "next_open",
+             stop_loss=None, take_profit=None, trailing_stop=None) -> dict:
     """Exact long-only simulation. All monetary results are Fractions."""
     times, opens, closes = _validate_candles(candles)
     capital = _dec(initial_capital, "initial_capital")
@@ -141,8 +156,19 @@ def simulate(candles, *, fast: int, slow: int, initial_capital="100000",
     else:
         raise OracleRefused("UNSUPPORTED_SIZING_MODE")
 
+    stops = {}
+    for name, raw in (("stop_loss", stop_loss), ("take_profit", take_profit),
+                      ("trailing_stop", trailing_stop)):
+        if raw is None:
+            continue
+        level = _dec(raw, name)
+        if not 0 < level < 1:
+            raise OracleRefused("INVALID_STOP:" + name)
+        stops[name] = level
+
     entries, exits, margin = sma_cross_signals(closes, fast, slow)
     next_bar = execution == "next_open"
+    peak = Fraction(0)
     cash, shares = capital, Fraction(0)
     entry_price = entry_fee = Fraction(0)
     entry_bar = 0
@@ -151,7 +177,7 @@ def simulate(candles, *, fast: int, slow: int, initial_capital="100000",
     pending = None
 
     def buy(bar, raw):
-        nonlocal cash, shares, entry_price, entry_fee, entry_bar, total_fees
+        nonlocal cash, shares, entry_price, entry_fee, entry_bar, total_fees, peak
         price = raw * (1 + slip)
         affordable = cash / (price * (1 + fee_rate))
         if sizing_mode == "percent":
@@ -165,6 +191,7 @@ def simulate(candles, *, fast: int, slow: int, initial_capital="100000",
         cash -= size * price + fee
         total_fees += fee
         shares, entry_price, entry_fee, entry_bar = size, price, fee, bar
+        peak = price
 
     def sell(bar, raw, reason):
         nonlocal cash, shares, total_fees
@@ -181,22 +208,36 @@ def simulate(candles, *, fast: int, slow: int, initial_capital="100000",
         cash += shares * price - fee
         shares = Fraction(0)
 
+    def stop_reason(i):
+        close = closes[i]
+        if "stop_loss" in stops and close <= entry_price * (1 - stops["stop_loss"]):
+            return "stop_loss"
+        if "take_profit" in stops and close >= entry_price * (1 + stops["take_profit"]):
+            return "take_profit"
+        if "trailing_stop" in stops and close <= peak * (1 - stops["trailing_stop"]):
+            return "trailing_stop"
+        return None
+
     for i in range(len(closes)):
         if next_bar:
-            if pending == "exit" and shares > 0:
-                sell(i, opens[i], "signal")
+            if pending is not None and pending != "entry" and shares > 0:
+                sell(i, opens[i], pending)
             elif pending == "entry" and shares == 0:
                 buy(i, opens[i])
             pending = None
             if shares > 0:
-                if exits[i]:
-                    pending = "exit"
+                peak = max(peak, closes[i])
+                reason = stop_reason(i)
+                if reason or exits[i]:
+                    pending = reason or "signal"
             elif entries[i]:
                 pending = "entry"
         else:
             if shares > 0:
-                if exits[i]:
-                    sell(i, closes[i], "signal")
+                peak = max(peak, closes[i])
+                reason = stop_reason(i)
+                if reason or exits[i]:
+                    sell(i, closes[i], reason or "signal")
             elif entries[i]:
                 buy(i, closes[i])
         equity.append(cash + shares * closes[i])

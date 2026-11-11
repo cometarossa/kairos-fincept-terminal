@@ -139,6 +139,77 @@ class SimulationTests(unittest.TestCase):
         self.assertEqual(result["final_capital"], shares * 130 * F("0.99"))
 
 
+class StopTests(unittest.TestCase):
+    """Stops on ROUND_TRIP. next_open buys at 112 (open of bar 11); closes then run
+    111, 112, 105, 104, ... same_close buys at 110 (close of bar 10)."""
+
+    def run_stops(self, **kwargs):
+        result = simulate(candles_from(ROUND_TRIP, open_offset="1"), fast=2, slow=4,
+                          initial_capital="1000", **kwargs)
+        self.assertEqual(len(result["trades"]), 1)
+        return result, result["trades"][0]
+
+    def test_stop_loss_is_judged_on_the_close_and_fills_at_the_next_open(self):
+        # 112 * 0.95 = 106.4. Closes 111 and 112 hold; close 105 on bar 13 breaks it.
+        result, trade = self.run_stops(stop_loss="0.05")
+        self.assertEqual((trade["exit_bar"], trade["exit_reason"]), (14, "stop_loss"))
+        self.assertEqual(trade["exit_price"], 105)
+        self.assertEqual(result["final_capital"], F(105000, 112))
+
+    def test_stop_can_fire_on_the_fill_bar_itself(self):
+        # 112 * 0.995 = 111.44 and the fill bar closes at 111: stopped at once,
+        # sold at the open of bar 12 = 113, above the entry.
+        result, trade = self.run_stops(stop_loss="0.005")
+        self.assertEqual((trade["entry_bar"], trade["exit_bar"]), (11, 12))
+        self.assertEqual(trade["exit_reason"], "stop_loss")
+        self.assertEqual(trade["exit_price"], 113)
+        self.assertEqual(trade["pnl"], F(1000, 112))
+
+    def test_take_profit_same_close(self):
+        # Bought at 110; 110 * 1.01 = 111.1. Close 111 holds, close 112 takes profit.
+        result, trade = self.run_stops(take_profit="0.01", execution="same_close")
+        self.assertEqual((trade["entry_bar"], trade["exit_bar"]), (10, 12))
+        self.assertEqual(trade["exit_reason"], "take_profit")
+        self.assertEqual(trade["exit_price"], 112)
+        self.assertEqual(result["final_capital"], F(112000, 110))
+
+    def test_trailing_stop_starts_at_the_entry_fill(self):
+        # Peak starts at the 112 fill and never rises: 112 * 0.95 = 106.4, hit by 105.
+        _, trade = self.run_stops(trailing_stop="0.05")
+        self.assertEqual((trade["exit_bar"], trade["exit_reason"]), (14, "trailing_stop"))
+
+    def test_trailing_stop_follows_the_highest_close(self):
+        # same_close buys at 110; peak climbs to 112, so the 5% trail sits at 106.4
+        # while a 5% stop-loss from 110 sits at 104.5. Close 105 trips only the trail.
+        result, trade = self.run_stops(trailing_stop="0.05", stop_loss="0.05",
+                                       execution="same_close")
+        self.assertEqual((trade["exit_bar"], trade["exit_reason"]), (13, "trailing_stop"))
+        self.assertEqual(trade["exit_price"], 105)
+
+    def test_stop_loss_outranks_trailing_and_a_stop_outranks_the_signal(self):
+        # Bar 13 is also the crossover exit bar; both stops hold there too.
+        _, trade = self.run_stops(stop_loss="0.05", trailing_stop="0.05")
+        self.assertEqual(trade["exit_reason"], "stop_loss")
+        _, plain = self.run_stops()
+        self.assertEqual((plain["exit_bar"], plain["exit_reason"]), (14, "signal"))
+
+    def test_stop_uses_the_fill_price_including_slippage(self):
+        # Entry 112 * 1.02 = 114.24. A 2.9% stop sits at 110.927, below the 111
+        # close, so it holds until bar 13; a 2.8% stop sits at 111.041 and the 111
+        # close of the fill bar trips it. Against the raw 112 neither would fire.
+        _, held = self.run_stops(stop_loss="0.029", slippage="0.02")
+        self.assertEqual(held["exit_bar"], 14)
+        _, hit = self.run_stops(stop_loss="0.028", slippage="0.02")
+        self.assertEqual((hit["exit_bar"], hit["exit_reason"]), (12, "stop_loss"))
+
+    def test_invalid_stops_are_refused(self):
+        for name in ("stop_loss", "take_profit", "trailing_stop"):
+            for value in ("0", "1", "-0.1", 0.05, True):
+                with self.subTest(name=name, value=value):
+                    with self.assertRaises(OracleRefused):
+                        self.run_stops(**{name: value})
+
+
 class RefusalTests(unittest.TestCase):
     def test_floats_and_malformed_inputs_are_refused(self):
         good = synthetic_candles(60)

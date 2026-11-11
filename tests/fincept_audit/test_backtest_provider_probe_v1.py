@@ -32,7 +32,8 @@ def expected_for(scenario):
         commission=scenario.get("commission", "0"), slippage=scenario.get("slippage", "0"),
         sizing_mode=scenario.get("sizing_mode", "percent"),
         sizing_value=scenario.get("sizing_value", "100"),
-        execution=scenario.get("execution", "next_open"))
+        execution=scenario.get("execution", "next_open"),
+        **{name: scenario.get(name) for name in probe.STOP_KEYS})
 
 
 @unittest.skipUnless(HAVE_PROVIDER_DEPS, "original provider needs numpy and pandas")
@@ -46,9 +47,10 @@ class OriginalProviderAgainstOracleTests(unittest.TestCase):
     def test_every_scenario_matches_the_exact_oracle(self):
         result = self.result
         self.assertEqual(result["schema"], "kairos_fincept_backtest_provider_probe_v1")
-        self.assertEqual(result["scenario_count"], 6)
+        self.assertEqual(result["scenario_count"], 14)
         names = [s["scenario"] for s in result["scenarios"]]
-        self.assertEqual(names, [s["name"] for s in probe.default_scenarios()])
+        self.assertEqual(names, [s["name"] for s in probe.default_scenarios() + probe.stop_scenarios()])
+        self.assertEqual(len(set(names)), 14)
         for scenario in result["scenarios"]:
             with self.subTest(scenario=scenario["scenario"]):
                 self.assertEqual(scenario["status"], "ORIGINAL_PROVIDER_MATCHES_EXACT_ORACLE")
@@ -64,6 +66,37 @@ class OriginalProviderAgainstOracleTests(unittest.TestCase):
             "next_open_no_costs", "next_open_costs", "next_open_costs_40pct", "same_close_costs")}
         self.assertEqual(len(returns), 4)
         self.assertEqual(by_name["open_position_at_end"]["exit_reasons"], ["end_of_data", "signal"])
+
+    def test_stops_fire_before_the_signal_and_change_the_outcome(self):
+        by_name = {s["scenario"]: s for s in self.result["scenarios"]}
+        # 3% stop-loss leaves four bars before the crossover exit (bar 58).
+        self.assertEqual(by_name["stop_loss_after_shock"]["exit_bars"], [24, 54, 81, 137])
+        self.assertEqual(by_name["stop_loss_after_shock_same_close"]["exit_bars"], [23, 53, 80, 136])
+        self.assertEqual(by_name["take_profit"]["exit_bars"], [24, 56, 113])
+        self.assertEqual(by_name["trailing_stop"]["exit_bars"], [24, 78, 135])
+        self.assertEqual(by_name["trailing_stop"]["exit_reasons"], ["trailing_stop"])
+        self.assertEqual(by_name["all_three_after_shock"]["exit_reasons"],
+                         ["signal", "stop_loss", "take_profit"])
+        # A stop on the same bar as the signal changes only the reported reason.
+        tie, plain = by_name["stop_loss_ties_with_signal"], by_name["next_open_costs"]
+        self.assertEqual(tie["exit_bars"], plain["exit_bars"])
+        self.assertEqual(tie["oracle_total_return"], plain["oracle_total_return"])
+        self.assertEqual(tie["exit_reasons"], ["signal", "stop_loss"])
+        self.assertNotEqual(by_name["take_profit"]["oracle_total_return"],
+                            plain["oracle_total_return"])
+
+    def test_comparison_detects_a_missing_or_wrong_stop(self):
+        scenario = next(s for s in probe.stop_scenarios() if s["name"] == "stop_loss_after_shock")
+        run = probe.run_original_provider(
+            BACKTESTING, probe.build_request(probe.fixture_for(scenario), scenario))
+        candles = probe.fixture_for(scenario)
+        base = dict(fast=5, slow=20, commission="0.001", slippage="0.0005")
+        probe.compare(run["response"], oracle.simulate(candles, stop_loss="0.03", **base))
+        for wrong in ({}, {"stop_loss": "0.08"}, {"trailing_stop": "0.03"},
+                      {"stop_loss": "0.03", "execution": "same_close"}):
+            with self.subTest(wrong=wrong):
+                with self.assertRaises(probe.ProbeError):
+                    probe.compare(run["response"], oracle.simulate(candles, **base, **wrong))
 
     def test_result_carries_the_probe_labels_not_the_provider_ones(self):
         result = self.result
@@ -166,14 +199,16 @@ class PinnedSourceTests(unittest.TestCase):
                              "MISSING_OR_INVALID_PINNED_ORIGINAL:vectorbt/vbt_indicators.py")
 
     def test_fixture_drift_is_refused(self):
-        original = probe.FIXTURE_SHA256[160]
-        probe.FIXTURE_SHA256[160] = "0" * 64
-        try:
-            with self.assertRaises(probe.ProbeError) as raised:
-                probe.run_scenario(BACKTESTING, COSTS)
-            self.assertEqual(str(raised.exception), "SYNTHETIC_FIXTURE_DRIFT:160")
-        finally:
-            probe.FIXTURE_SHA256[160] = original
+        for key, scenario in (("160", COSTS), ("160/shock53x500", probe.stop_scenarios()[0])):
+            original = probe.FIXTURE_SHA256[key]
+            probe.FIXTURE_SHA256[key] = "0" * 64
+            try:
+                with self.subTest(key=key), self.assertRaises(probe.ProbeError) as raised:
+                    probe.run_scenario(BACKTESTING, scenario)
+                self.assertEqual(str(raised.exception), "SYNTHETIC_FIXTURE_DRIFT:" + key)
+            finally:
+                probe.FIXTURE_SHA256[key] = original
+        self.assertEqual(sorted(probe.FIXTURE_SHA256), ["130", "160", "160/shock53x500"])
 
 
 class ChildIsolationTests(unittest.TestCase):
@@ -272,8 +307,12 @@ class RequestTests(unittest.TestCase):
             # Two-decimal prices survive the provider's round(4) unchanged.
             self.assertEqual(Fraction(repr(row["c"])), Fraction(source["c"]))
             self.assertEqual(round(row["c"], 4), row["c"])
-        for forbidden in ("allowSyntheticData", "benchmark", "benchmarkSymbol", "stopLoss"):
+        for forbidden in ("allowSyntheticData", "benchmark", "benchmarkSymbol",
+                          "stopLoss", "takeProfit", "trailingStop"):
             self.assertNotIn(forbidden, request)
+        stops = probe.build_request(candles, dict(COSTS, stop_loss="0.03", trailing_stop="0.04"))
+        self.assertEqual((stops["stopLoss"], stops["trailingStop"]), (0.03, 0.04))
+        self.assertNotIn("takeProfit", stops)
 
 
 if __name__ == "__main__":

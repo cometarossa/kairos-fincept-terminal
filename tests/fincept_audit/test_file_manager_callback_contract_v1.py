@@ -16,7 +16,7 @@ def preserved(text):
     body = re.sub(r"/\*.*?\*/|//[^\n]*", "", body, flags=re.DOTALL)
     tokens = (
         "new screens::FileManagerScreen;",
-        "&screens::FileManagerScreen::open_file_in_screen",
+        "connect(fm, &screens::FileManagerScreen::open_file_in_screen, this,",
         "dock_router_->navigate(route_id);",
         'route_id == "code_editor" && !file_path.isEmpty()',
         "dock_router_->materialize_now(route_id);",
@@ -39,6 +39,19 @@ class FileManagerSourceContractTests(unittest.TestCase):
             ("nb->open_notebook_path(file_path);", "nb->close();"),
         ):
             with self.subTest(before=before):
+                self.assertIn(before, original)
+                self.assertFalse(preserved(original.replace(before, after, 1)))
+
+    def test_disconnected_sender_or_receiver_rejected(self):
+        original = SOURCE.read_text(encoding="utf-8-sig")
+        self.assertTrue(preserved(original))
+        for before, after in (
+            ("connect(fm, &screens::FileManagerScreen::open_file_in_screen, this,",
+             "connect(other, &screens::FileManagerScreen::open_file_in_screen, this,"),
+            ("connect(fm, &screens::FileManagerScreen::open_file_in_screen, this,",
+             "connect(fm, &screens::FileManagerScreen::open_file_in_screen, other,"),
+        ):
+            with self.subTest(after=after):
                 self.assertIn(before, original)
                 self.assertFalse(preserved(original.replace(before, after, 1)))
 

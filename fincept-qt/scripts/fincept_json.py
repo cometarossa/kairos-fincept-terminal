@@ -84,7 +84,8 @@ def sanitize(obj):
         return _finite_or_none(obj)
 
     if isinstance(obj, Decimal):
-        return None if not obj.is_finite() else float(obj)
+        # A finite Decimal can still overflow the JSON float representation.
+        return None if not obj.is_finite() else _finite_or_none(float(obj))
 
     if _np is not None:
         if isinstance(obj, _np.ndarray):

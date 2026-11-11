@@ -45,6 +45,31 @@ class FinceptOriginalBaselineTests(unittest.TestCase):
                 self.assertTrue(widgets)
                 self.assertTrue(set(widgets).issubset(now["widgets"]))
 
+    def test_truncated_baseline_rejected_even_when_source_is_intact(self):
+        # A partial baseline must not silently narrow preservation coverage.
+        import copy
+        now = source_inventory(ROOT)
+        baseline = copy.deepcopy(BASELINE)
+        baseline["routes"].pop("dashboard")
+        with self.assertRaisesRegex(BaselineError, "INVALID_BASELINE_COUNT:routes"):
+            compare_to_baseline(now, baseline)
+
+    def test_baseline_order_manifest_mismatch_rejected(self):
+        import copy
+        now = source_inventory(ROOT)
+        baseline = copy.deepcopy(BASELINE)
+        baseline["widget_order"][0] = "not_a_registered_widget"
+        with self.assertRaisesRegex(BaselineError, "INVALID_BASELINE_ORDER:widgets"):
+            compare_to_baseline(now, baseline)
+
+    def test_baseline_runtime_claim_rejected(self):
+        import copy
+        now = source_inventory(ROOT)
+        baseline = copy.deepcopy(BASELINE)
+        baseline["source_kind"] = "GUI_VERIFIED"
+        with self.assertRaisesRegex(BaselineError, "INVALID_BASELINE_SOURCE_KIND"):
+            compare_to_baseline(now, baseline)
+
     def test_removed_original_route_rejected(self):
         with TemporaryDirectory() as d:
             root = Path(d)

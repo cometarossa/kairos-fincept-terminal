@@ -23,7 +23,7 @@ PINNED_MODULES = {
     "momentum": ("931056f67fd992f26c7f02be6ec12c865dcd20a6ef27c777a62287d76d14d845", 18),
     "trend": ("9aba65b9c162ff51b060984ded86e8ab5e1cc3760f10a8cbec9f68ba491e72fd", 30),
     "volume": ("81cac7f2e4ef2e3e5b6140d969d3d7c4e0822f9d9453457243fdc223fe352004", 10),
-    "others": ("c0c8b9f93a99ae4a699f96112927cdd18553a7e5b486b09c18bde0fdf4f117", 3),
+    "others": ("c0c8b9f93a99ae4a699f96112927cdd18553a7a3e5b486b09c18bde0fdf4f117", 3),
 }
 OHLCV_BARS = 180
 # PSAR_up / PSAR_down are sparse regime-specific series. The original trend

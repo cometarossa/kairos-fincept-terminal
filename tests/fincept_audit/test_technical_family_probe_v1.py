@@ -115,6 +115,20 @@ class OriginalTechnicalFunctionTests(unittest.TestCase):
             with self.assertRaisesRegex(TechnicalProbeError, "MISSING_OR_INVALID_PINNED_ORIGINAL"):
                 run_all(Path(dir))
 
+    def test_source_pin_failure_restores_all_socket_guards(self):
+        # A source-integrity rejection must not leave the process patched.
+        original_connect = socket.socket.connect
+        original_connect_ex = socket.socket.connect_ex
+        original_create_connection = socket.create_connection
+        with TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(
+                TechnicalProbeError, "MISSING_OR_INVALID_PINNED_ORIGINAL"
+            ):
+                run_all(Path(directory))
+        self.assertIs(socket.socket.connect, original_connect)
+        self.assertIs(socket.socket.connect_ex, original_connect_ex)
+        self.assertIs(socket.create_connection, original_create_connection)
+
     def test_network_guard_is_restored(self):
         original_connect = socket.socket.connect
         original_create_connection = socket.create_connection

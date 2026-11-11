@@ -88,6 +88,14 @@ int run_screen_smoke_test(DockScreenRouter* router) {
     std::fflush(stderr);
     LOG_INFO("Smoke", QString("Screen smoke test: %1 screens").arg(ids.size()));
 
+    // An empty registry is not a successful screen smoke: nothing was exercised.
+    if (ids.isEmpty()) {
+        std::fprintf(stderr, "[Smoke] FAIL: no registered screens to test\n");
+        std::fflush(stderr);
+        LOG_ERROR("Smoke", "Aborted: screen registry is empty");
+        return 4;
+    }
+
     QStringList failures;
     for (const QString& id : ids) {
         // Breadcrumb BEFORE construction so a hard process abort (e.g. a missing

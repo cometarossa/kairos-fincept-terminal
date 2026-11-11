@@ -244,12 +244,17 @@ class SimplePortfolio:
 
     @classmethod
     def from_equity_series(cls, equity: pd.Series, init_cash: float,
-                           trade_records: Optional[pd.DataFrame] = None) -> 'SimplePortfolio':
+                           trade_records: Optional[pd.DataFrame] = None,
+                           total_fees_value: float = 0.0) -> 'SimplePortfolio':
         """Build a SimplePortfolio from a pre-computed equity series (e.g. multi-asset combined).
 
         `trade_records` (the per-symbol trades concatenated) feeds the trade statistics; without
         it a multi-asset run reported 0 trades / 0% win rate / 0 profit factor alongside a trade
         list that was not empty.
+
+        `total_fees_value` is the commission the per-symbol simulations charged, summed.
+        The combined equity is already net of it; without it `statistics.totalFees` read 0
+        for every multi-asset run while each trade listed a non-zero commission.
         """
         if trade_records is None or len(trade_records) == 0:
             trade_records = pd.DataFrame(columns=[
@@ -262,6 +267,7 @@ class SimplePortfolio:
             close_series=close_proxy,
             trade_records=trade_records,
             init_cash=init_cash,
+            total_fees_value=total_fees_value,
         )
 
     # ------------------------------------------------------------------

@@ -198,3 +198,33 @@ Next gate: independent review plus a native Qt6 build and isolated risk-tooltip
 smoke, including clean history, missing history and failed refresh. A subsequent
 calendar-aware methodology change needs its own specification and independent
 numerical validation; it must not be smuggled into this disclosure-only fix.
+
+## Original/candidate JSON isolation and combined check (2026-11-11)
+
+This supersedes the preceding statement that both suites use the original JSON
+helper. The historical suite now reads BOTH modules from baseline
+`7716ee8613249fb44c4d14036c5bc16ed6f34e97` and verifies the unchanged SHA-256 pins.
+The candidate suite loads each working source explicitly, under a separate
+`sys.modules` binding during import. It verifies module identity and retains a
+negative check showing that the historical Decimal overflow still fails. The
+Portfolio CLI warning test also verifies use of the candidate helper's `emit`.
+There is no hash refresh or fallback to candidate bytes for historical tests.
+
+Local results on the amended #28 sources: **43/43 PASS** (20 historical,
+10 candidate, 13 inherited). An isolated detached worktree based on #28
+`3cf22fd622bf34109088bbcaf4d0dd12d2806abd`, with these two amended test files and
+#30 `6eb3e0fe1a1428a51b76bd640de40025284a8b28`'s JSON source and JSON test file,
+passed **53/53**. No merge to any shared branch was performed.
+
+Additional combined CLI smoke: patched only the candidate `analytics` return to
+`{'overflow': Decimal('1e10000'), 'valid': 7}`; executed candidate `main` with
+`['portfolio_metrics.py', 'analytics', '{}']`; parsed its captured stdout and
+asserted exactly one line with `{'overflow': None, 'valid': 7}`. PASS. This is a
+synthetic serialization boundary check, not a provider or GUI end-to-end test.
+
+Reproduce the suites with `PYTHONPATH=<isolated-ta-0.11.0-dir>:. python -m unittest
+discover -s tests/fincept_audit -p 'test_*.py' -q` in each respective tree.
+Environment unchanged: Python 3.12.14, NumPy 2.3.5, pandas 2.2.3, ta 0.11.0.
+Git diff --check PASS. #29's separate OHLCV changes are NOT part of this combined
+check. Native build/GUI, CI and independent review remain NOT_VERIFIED. No
+runtime, broker, deployment or paid API operation; added cost zero.

@@ -4,6 +4,7 @@ Original source is read from a fixed Git commit by the parent audit helper.
 No provider, broker or installed Fincept runtime is invoked.
 """
 from contextlib import ExitStack, redirect_stdout
+from decimal import Decimal
 import importlib.util
 import io
 import json
@@ -23,14 +24,30 @@ class PortfolioQualityDisclosureTests(unittest.TestCase):
         for target in ['socket.socket.connect', 'socket.socket.connect_ex',
                        'socket.create_connection', 'socket.getaddrinfo']:
             stack.enter_context(patch(target, side_effect=AssertionError('NETWORK_DENIED')))
-        stack.enter_context(patch.dict(sys.modules, {'fincept_json': load_original('fincept_json')}))
-        self.original = load_original('portfolio_metrics')
-        path = SCRIPTS / 'portfolio_metrics.py'
-        spec = importlib.util.spec_from_file_location('portfolio_candidate', path)
-        self.current = importlib.util.module_from_spec(spec)
-        exec(compile(path.read_bytes(), str(path), 'exec'), self.current.__dict__)
+        self.original_helper = load_original('fincept_json')
+        with patch.dict(sys.modules, {'fincept_json': self.original_helper}):
+            self.original = load_original('portfolio_metrics')
+        self.current_helper = self.load_current('fincept_json')
+        with patch.dict(sys.modules, {'fincept_json': self.current_helper}):
+            self.current = self.load_current('portfolio_metrics')
         self.payload = {'symbols': ['ALPHA', 'BETA'], 'benchmark': 'BENCH',
                         'weights': {'ALPHA': .25, 'BETA': .75}}
+
+    @staticmethod
+    def load_current(name):
+        path = SCRIPTS / (name + '.py')
+        spec = importlib.util.spec_from_file_location(name + '_candidate', path)
+        module = importlib.util.module_from_spec(spec)
+        exec(compile(path.read_bytes(), str(path), 'exec'), module.__dict__)
+        return module
+
+    def test_original_and_candidate_bind_distinct_json_sources(self):
+        self.assertIs(self.original.fincept_json, self.original_helper)
+        self.assertIs(self.current.fincept_json, self.current_helper)
+        self.assertIsNot(self.original_helper, self.current_helper)
+        # Historical evidence must keep exposing the original overflow defect.
+        with self.assertRaises(ValueError):
+            self.original.fincept_json.dumps({'overflow': Decimal('1e10000')})
 
     def run_module(self, module, data):
         with patch.object(module, '_download', return_value=data) as download:
@@ -101,7 +118,9 @@ class PortfolioQualityDisclosureTests(unittest.TestCase):
         data.loc[data.index[21:], ('BETA', 'Close')] = float('nan')
         output = io.StringIO()
         with patch.object(self.current, '_download', return_value=data), redirect_stdout(output):
-            self.current.main(['portfolio_metrics.py', 'analytics', json.dumps(self.payload)])
+            with patch.object(self.current_helper, 'emit', wraps=self.current_helper.emit) as emit:
+                self.current.main(['portfolio_metrics.py', 'analytics', json.dumps(self.payload)])
+            emit.assert_called_once()
         self.assertEqual(len(output.getvalue().splitlines()), 1)
         self.assertTrue(any('40 missing return' in w for w in json.loads(output.getvalue())['warnings']))
 

@@ -33,10 +33,10 @@ def load_original(name):
     path = SCRIPTS / (name + '.py')
     # Keep auditing the original snapshot even on a remediation branch.
     # The adjacent remediation tests exercise the current working source.
-    source = (subprocess.run(
-        ['git', 'show', '7716ee8613249fb44c4d14036c5bc16ed6f34e97:fincept-qt/scripts/portfolio_metrics.py'],
+    source = subprocess.run(
+        ['git', 'show', f'7716ee8613249fb44c4d14036c5bc16ed6f34e97:fincept-qt/scripts/{name}.py'],
         cwd=ROOT, check=True, capture_output=True, timeout=5,
-    ).stdout if name == 'portfolio_metrics' else path.read_bytes())
+    ).stdout
     if sha256(source).hexdigest() != PINS[name]:
         raise AssertionError('ORIGINAL_SOURCE_CHANGED: ' + name)
     spec = importlib.util.spec_from_file_location(name, path)

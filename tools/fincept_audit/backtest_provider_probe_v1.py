@@ -35,8 +35,10 @@ import tempfile
 
 try:  # package import (tests) or direct script execution
     from tools.fincept_audit import backtest_oracle_v1 as oracle
+    from tools.fincept_audit import backtest_metrics_oracle_v1 as metrics_oracle
 except ImportError:  # pragma: no cover - direct execution
     import backtest_oracle_v1 as oracle
+    import backtest_metrics_oracle_v1 as metrics_oracle
 
 SCHEMA = "kairos_fincept_backtest_provider_probe_v1"
 BACKTESTING_RELATIVE = "fincept-qt/scripts/Analytics/backtesting"
@@ -60,14 +62,21 @@ FIXTURE_SHA256 = {
     "160": "96228c052d7daeb8da5f079ac1c221c0db4fe7971a25487f6bb3d2f1a7ca1a4e",
     "130": "8d5947c974752a706fc7b47f8cff3884fe886fed580d21ea5658b26935cf04dd",
     "160/shock53x500": "6f9d2f5d04801dc64e160faa0a19ceaa48ce52cdd297538f5e1602bbe0325d46",
+    "160/weekdays": "11f6b0fdfd4948b527e87e214d403f1180d4ff43747b3928a1dfe33371dc497a",
 }
 SHOCK = {"bars": 160, "shock_bar": 53, "shock_cents": 500}
+WEEKDAYS = {"bars": 160, "weekdays_only": True}
+# Bars per year the provider must infer from the bar spacing, and the text it
+# must print in `assumptions.annualization` for it.
+ANNUALIZATION_TEXT = {365: "365 bars/year (daily bars, 7-day market)",
+                      252: "252 bars/year (daily equity bars)"}
 # oracle argument -> provider request key (both are fractions of price)
 STOP_KEYS = {"stop_loss": "stopLoss", "take_profit": "takeProfit", "trailing_stop": "trailingStop"}
 SYMBOL = "KAIROSSYNTH"
 DATA_SOURCE_TAG = "kairos_synthetic_fixture"
 REL_TOL = 1e-9
-ABS_TOL = 1e-6
+ABS_TOL = 1e-6          # currency amounts around 1e5
+RATIO_ABS_TOL = 1e-12   # dimensionless metrics, some as small as 1e-4
 TIMEOUT_SECONDS = 120
 
 # Runs inside the child. Denies Python sockets, executes the provider file as
@@ -146,12 +155,28 @@ def stop_scenarios():
     ]
 
 
+def metric_scenarios():
+    """Scenarios added for the metrics block: risk-free rate and a 252-bar year."""
+    costs = {"fast": 5, "slow": 20, "commission": "0.001", "slippage": "0.0005"}
+    return [
+        dict(costs, name="risk_free_4pct", risk_free_rate="0.04"),
+        dict(costs, name="weekday_calendar_252", fixture=WEEKDAYS),
+        dict(costs, name="weekday_calendar_252_risk_free", fixture=WEEKDAYS, risk_free_rate="0.025"),
+    ]
+
+
+def expected_periods_per_year(scenario: dict) -> int:
+    return 252 if (scenario.get("fixture") or {}).get("weekdays_only") else 365
+
+
 def fixture_for(scenario: dict):
     """Build the scenario's candles and refuse them unless their hash is pinned."""
     spec = dict(scenario.get("fixture") or {"bars": scenario.get("bars", 160)})
     key = str(spec["bars"])
     if spec.get("shock_bar") is not None:
         key += "/shock%dx%d" % (spec["shock_bar"], spec["shock_cents"])
+    if spec.get("weekdays_only"):
+        key += "/weekdays"
     candles = oracle.synthetic_candles(**spec)
     digest = sha256(json.dumps(candles, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
     if FIXTURE_SHA256.get(key) != digest:
@@ -184,6 +209,8 @@ def build_request(candles, scenario: dict) -> dict:
         "execution": scenario.get("execution", "next_open"),
         **{key: float(Fraction(scenario[name])) for name, key in STOP_KEYS.items()
            if scenario.get(name) is not None},
+        **({"riskFreeRate": float(Fraction(scenario["risk_free_rate"]))}
+           if scenario.get("risk_free_rate") is not None else {}),
         "brokerDataSource": DATA_SOURCE_TAG,
         "brokerCandles": {SYMBOL: [
             {"t": row["t"], "o": float(row["o"]), "h": float(row["h"]),
@@ -243,10 +270,10 @@ def run_original_provider(backtesting_dir: Path, request: dict, python: str = sy
             "network_attempts": int(report.get("network_attempts", -1))}
 
 
-def _close(observed, expected: Fraction, what: str) -> None:
+def _close(observed, expected: Fraction, what: str, abs_tol: float = ABS_TOL) -> None:
     if isinstance(observed, bool) or not isinstance(observed, (int, float)) or not math.isfinite(observed):
         raise ProbeError("NON_FINITE_PROVIDER_VALUE:" + what)
-    if not math.isclose(float(observed), float(expected), rel_tol=REL_TOL, abs_tol=ABS_TOL):
+    if not math.isclose(float(observed), float(expected), rel_tol=REL_TOL, abs_tol=abs_tol):
         raise ProbeError("ORACLE_MISMATCH:%s:provider=%r:oracle=%r" % (what, observed, float(expected)))
 
 
@@ -296,6 +323,48 @@ def compare(response: dict, expected: dict) -> dict:
             "provider_total_slippage": statistics.get("totalSlippage")}
 
 
+# provider `performance` / `statistics` key -> oracle key
+PERFORMANCE_KEYS = {
+    "totalReturn": "total_return", "annualizedReturn": "annualized_return",
+    "volatility": "volatility", "sharpeRatio": "sharpe", "sortinoRatio": "sortino",
+    "maxDrawdown": "max_drawdown", "calmarRatio": "calmar", "winRate": "win_rate",
+    "averageWin": "average_win", "averageLoss": "average_loss",
+    "largestWin": "largest_win", "largestLoss": "largest_loss",
+    "expectancy": "expectancy", "averageTradeReturn": "expectancy",
+}
+STATISTICS_KEYS = {"averageDailyReturn": "average_bar_return", "bestDay": "best_bar",
+                   "worstDay": "worst_bar"}
+COUNT_KEYS = {("performance", "totalTrades"): "total_trades",
+              ("performance", "winningTrades"): "winning_trades",
+              ("performance", "losingTrades"): "losing_trades",
+              ("statistics", "winningDays"): "winning_bars",
+              ("statistics", "losingDays"): "losing_bars"}
+
+
+def compare_metrics(response: dict, expected: dict) -> None:
+    """Check the provider's performance and statistics blocks against the metric oracle."""
+    data = response.get("data") or {}
+    performance, statistics = data.get("performance") or {}, data.get("statistics") or {}
+    for block, mapping in ((performance, PERFORMANCE_KEYS), (statistics, STATISTICS_KEYS)):
+        for key, name in mapping.items():
+            _close(block.get(key), Fraction(expected[name]), key, RATIO_ABS_TOL)
+    _close(performance.get("lossRate"), 1 - expected["win_rate"], "lossRate", RATIO_ABS_TOL)
+    for (block_name, key), name in COUNT_KEYS.items():
+        observed = (performance if block_name == "performance" else statistics).get(key)
+        if isinstance(observed, bool) or observed != expected[name]:
+            raise ProbeError("ORACLE_MISMATCH:%s:provider=%r:oracle=%r" % (key, observed, expected[name]))
+    factor = performance.get("profitFactor")
+    if expected["profit_factor"] is None:
+        if factor is not None:  # +inf is serialised as null by the provider
+            raise ProbeError("ORACLE_MISMATCH:profitFactor:provider=%r:oracle=inf" % (factor,))
+    else:
+        _close(factor, expected["profit_factor"], "profitFactor", RATIO_ABS_TOL)
+    text = (data.get("assumptions") or {}).get("annualization", "")
+    wanted = ANNUALIZATION_TEXT[expected["periods_per_year"]]
+    if not isinstance(text, str) or not text.startswith(wanted):
+        raise ProbeError("ANNUALIZATION_BASIS_MISMATCH:provider=%r" % (text[:60],))
+
+
 def run_scenario(backtesting_dir: Path, scenario: dict, python: str = sys.executable) -> dict:
     candles = fixture_for(scenario)
     expected = oracle.simulate(
@@ -310,6 +379,11 @@ def run_scenario(backtesting_dir: Path, scenario: dict, python: str = sys.execut
         raise ProbeError("SCENARIO_HAS_NO_TRADES:" + scenario["name"])
     run = run_original_provider(backtesting_dir, build_request(candles, scenario), python)
     labels = compare(run["response"], expected)
+    measured = metrics_oracle.metrics(
+        expected["equity"], expected["trades"],
+        Fraction(scenario.get("initial_capital", "100000")), expected_periods_per_year(scenario),
+        Fraction(scenario.get("risk_free_rate", "0")))
+    compare_metrics(run["response"], measured)
     return {
         "scenario": scenario["name"],
         "bars": expected["bars"],
@@ -318,6 +392,10 @@ def run_scenario(backtesting_dir: Path, scenario: dict, python: str = sys.execut
         "exit_bars": [t["exit_bar"] for t in expected["trades"]],
         "oracle_total_return": float(expected["total_return"]),
         "oracle_total_fees": float(expected["total_fees"]),
+        "periods_per_year": measured["periods_per_year"],
+        "oracle_sharpe_as_stated_by_provider": float(measured["sharpe"]),
+        "oracle_sharpe_arithmetic_mean_convention": float(measured["conventional_sharpe"]),
+        "oracle_max_drawdown": float(measured["max_drawdown"]),
         "network_attempts_denied": run["network_attempts"],
         "status": "ORIGINAL_PROVIDER_MATCHES_EXACT_ORACLE",
         **labels,
@@ -326,7 +404,7 @@ def run_scenario(backtesting_dir: Path, scenario: dict, python: str = sys.execut
 
 def run_all(backtesting_dir: Path, python: str = sys.executable, scenarios=None) -> dict:
     results = [run_scenario(backtesting_dir, s, python)
-               for s in (scenarios or default_scenarios() + stop_scenarios())]
+               for s in (scenarios or default_scenarios() + stop_scenarios() + metric_scenarios())]
     return {
         "schema": SCHEMA,
         "source_kind": "SYNTHETIC_FIXTURE_NOT_MARKET_DATA",

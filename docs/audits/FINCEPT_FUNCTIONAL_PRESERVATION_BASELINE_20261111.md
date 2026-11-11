@@ -1,5 +1,20 @@
 # Fincept × KAIROS — Original Function Preservation Baseline V1
 
+## Qt smoke safety gate — follow-up (2026-11-11, source-only)
+
+The new `tools/fincept_audit/qt_screen_smoke_contract_v1.py` audits the **original** `fincept-qt/src/app/ScreenSmokeTest.cpp` without compiling, launching or navigating a Qt window. Nine additional tests in `tests/fincept_audit/test_qt_screen_smoke_contract_v1.py` cover the real-source contract and negative mutations: removal of the null-router failure, PIN-locked refusal, full route enumeration, pre-construction breadcrumb, exclusive navigation, and nonzero failure return. The existing original smoke's fail-closed PIN check runs before traversing routes; it explicitly refuses to auto-unlock. The script outputs `PASS_SOURCE_CHECKS` **with runtime_gui_pass=false and release_ready=false**.
+
+**Two important unresolved gaps reported, not silently passed:** (1) the original smoke's `all_screen_ids()` may yield an empty list and the empty loop falls through to an `OK` return — `EMPTY_REGISTRY_CAN_FALSE_PASS` (source audit detected; original implementation was NOT edited). (2) full native GUI build, actual screen showEvent and deferred dependency/data-provider side effects have **NOT** been executed safely on an isolated original-vs-hybrid test profile. `ScreenSmokeTest.cpp` documents that the PIN is in machine-wide SecureStorage; using `--profile` alone is insufficient to isolate a PIN-locked user. Never clear an existing user's PIN or run the smoke against the active installed Fincept process merely to improve coverage.
+
+**Latest test checkpoint:** after the previous **20/20** (12 baseline source/manifest, 4 technical-family smoke, 4 independent numeric), **9 new Qt smoke source-contract tests** bring the Mac offline source-only/fixture suite to **29/29 PASS**; Python compileall PASS. The fork's GitHub Actions remain disabled, so **NO hosted CI PASS** and **NO Qt runtime PASS**. No original Fincept application/source/profile/broker/IG component was changed. This audit demonstrates test-harness safeguards and a real blind spot, NOT the user's requested majority of functioning GUI features.
+
+Reproduce:
+
+```sh
+python3 -m unittest discover -s tests/fincept_audit -p 'test_*.py' -v
+python3 tools/fincept_audit/qt_screen_smoke_contract_v1.py --source-root .
+```
+
 ## Independent numeric oracles — later additive checkpoint (2026-11-11)
 
 A subsequent small test-only increment extends the **existing** DRAFT PR #26; it does not edit Fincept application source. The extra `tests/fincept_audit/test_indicator_numeric_oracle_v1.py` executes four new independent arithmetic comparisons against byte-pinned original Fincept technical modules using the same 180-bar synthetic OHLCV fixture:

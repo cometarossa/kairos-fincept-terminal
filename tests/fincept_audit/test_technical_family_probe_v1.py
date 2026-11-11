@@ -61,6 +61,26 @@ class OriginalTechnicalFunctionTests(unittest.TestCase):
             with self.assertRaisesRegex(TechnicalProbeError, "ORIGINAL_OHLCV_VALUES_CHANGED:volatility"):
                 run_all(SOURCE)
 
+    def test_denied_network_restores_socket_guards(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        original_connect = socket.socket.connect
+        original_connect_ex = socket.socket.connect_ex
+        original_create_connection = socket.create_connection
+
+        def attempt_network(data):
+            socket.create_connection(("127.0.0.1", 1), timeout=0.01)
+
+        fake = SimpleNamespace(calculate_all_volatility_indicators=attempt_network)
+        with patch("tools.fincept_audit.technical_family_probe_v1._load_pinned_module", return_value=fake):
+            with self.assertRaisesRegex(TechnicalProbeError, "NETWORK_ATTEMPT_DENIED"):
+                run_all(SOURCE)
+
+        self.assertIs(socket.socket.connect, original_connect)
+        self.assertIs(socket.socket.connect_ex, original_connect_ex)
+        self.assertIs(socket.create_connection, original_create_connection)
+
     def test_source_pin_tamper_denied(self):
         with TemporaryDirectory() as dir:
             temp = Path(dir)

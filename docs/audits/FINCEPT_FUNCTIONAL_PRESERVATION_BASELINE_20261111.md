@@ -49,7 +49,7 @@ The source of this repeatable probe is `tools/fincept_audit/technical_family_pro
 | Backtesting default data path | Historical PythonRunner NumPy1/NumPy2 dependency mismatch (missing yfinance in venv1) | **KNOWN BROKEN/AT RISK** | Fix data adapter in separate opt-in path; do not blind-install libs |
 | AI Quant Lab / Qlib | Command catalog and source exist | **SOURCE PRESENT; RUNTIME NOT VERIFIED** | Read-only module status / minimal synthetic computation; no heavy training |
 | Screener & Watchlist | Qt routes and old widget factories preserved | **SOURCE PRESERVED; GUI NOT RETESTED** | Open, search, save/reload without changing real user data |
-| Portfolio / Risk | Qt routes and original tools present, including write-capable tools | **SOURCE PRESENT; KAIROS WRITE ACCESS DENIED** | Read-only holdings mock/projection & UI persistence in isolated profile |
+| Portfolio / Risk | Original `portfolio_metrics.py` executed with synthetic prices; 20 numeric/error/characterization tests PASS; four data-quality findings reproduced in cloud Linux (see QA-LOCAL checkpoint below) | **NUMERIC FIXTURE PASS; DATA-QUALITY DISCLOSURE FAIL (PM-02/04); GUI/PROVIDER NOT_VERIFIED** | Mixed-calendar/missing-history semantics, then isolated UI/provider verification |
 | News, Economics, Crypto, Geo, Maritime, Equity, Agent Workbench | Routes present, but data feeds/paid providers/transitive dependencies vary; Equity earlier freeze not diagnosed | **FUNCTIONAL COVERAGE UNKNOWN** | Isolated screen-per-screen opening probe and feed/error diagnostics |
 | MCP | Fincept server and tool registry available; contains order/account/portfolio mutations | **DO NOT PASS RAW CATALOG TO KAIROS** | Authenticated service-side read-only allowlist + negative tool-call tests |
 | Trading / deployment | Original Fincept can issue real orders and auto-resume bots | **ORIGINAL BEHAVIOR NOT ALTERED; KAIROS ACCESS BLOCKED** | Only static/permission-denial tests; no broker/live trade smoke |
@@ -83,3 +83,12 @@ For runtime GUI coverage, leverage Fincept's existing `src/app/ScreenSmokeTest.c
 6. **Release gates remain open:** Qt GUI runtime before/after, existing VM provider issues, historical methodology limits, license notice conflict, and KAIROS local snapshot tests `/DATA` are NOT resolved by this source-only PR.
 
 **No existing Fincept source, installed executable, profile, service, dashboard, broker, API subscription or saved user state was altered in the production application.**
+
+## Cloud QA-LOCAL continuation — 2026-11-11 (pending draft integration)
+
+[Reproducible checkpoint and next task](../roadmap/FINCEPT_QA_LOCAL_CHECKPOINT_20261111.md).
+The original PR #26 Mac results above remain historical evidence. The cloud
+Linux rerun passed **25/25 tests**: the original 13 plus 12 new independent
+portfolio analytics tests. No application source changes. PR #24 source-only
+comparison repeated: 52 routes, 36 widgets, seven presets, original invariants
+preserved. Neither result establishes native Qt runtime compatibility.

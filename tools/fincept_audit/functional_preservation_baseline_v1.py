@@ -110,6 +110,19 @@ def compare_to_baseline(now: dict, baseline: dict) -> list[str]:
     """Return precise regression findings. Added routes, widgets and presets OK."""
     if baseline.get("schema") != "fincept_original_functional_source_baseline_v1":
         raise BaselineError("UNKNOWN_BASELINE_SCHEMA")
+    # A truncated baseline must never silently redefine "original".
+    # Source integrity is not evidence of working GUI functionality.
+    expected_counts = {"routes": 52, "widgets": 35, "templates": 6}
+    for name, count in expected_counts.items():
+        keys = baseline.get(name)
+        order_name = {"routes": "route_order", "widgets": "widget_order", "templates": "template_order"}[name]
+        order = baseline.get(order_name)
+        if not isinstance(keys, dict) or len(keys) != count:
+            raise BaselineError("INVALID_BASELINE_COUNT:" + name)
+        if not isinstance(order, list) or len(order) != count or set(order) != set(keys):
+            raise BaselineError("INVALID_BASELINE_ORDER:" + name)
+    if baseline.get("source_kind") != "STATIC_SOURCE_ONLY_NOT_RUNTIME_PROOF":
+        raise BaselineError("INVALID_BASELINE_SOURCE_KIND")
     errors: list[str] = []
     for name in ("routes", "widgets", "templates"):
         for key, expected in baseline[name].items():

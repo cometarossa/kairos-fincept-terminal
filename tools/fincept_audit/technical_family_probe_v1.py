@@ -88,8 +88,16 @@ def run_all(source_dir: Path) -> dict:
         modules = []
         for name, (expected_sha, expected_count) in PINNED_MODULES.items():
             mod = _load_pinned_module(source_dir / (name + "_indicators.py"), name, expected_sha)
+            input_before = data.copy(deep=True)
+            original_cols = tuple(input_before.columns)
             output = getattr(mod, "calculate_all_" + name + "_indicators")(data)
-            original_cols = tuple(data.columns)
+            # Detect in-place mutation as well as altered OHLCV values in output.
+            import pandas as pd
+            try:
+                pd.testing.assert_frame_equal(data, input_before, check_exact=True)
+                pd.testing.assert_frame_equal(output.loc[:, list(original_cols)], input_before, check_exact=True)
+            except (AssertionError, KeyError, ValueError, TypeError) as exc:
+                raise TechnicalProbeError("ORIGINAL_OHLCV_VALUES_CHANGED:" + name) from exc
             if tuple(output.columns[:len(original_cols)]) != original_cols:
                 raise TechnicalProbeError("INPUT_COLUMNS_CHANGED:" + name)
             generated = [col for col in output.columns if col not in original_cols]

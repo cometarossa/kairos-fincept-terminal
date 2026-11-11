@@ -15,8 +15,12 @@ none of it has had an independent review. Re-verify heads before relying on it.
 
 Compatibility check done earlier in the session, with #26 at `2f163180` merged
 locally into its dependants (isolated venv: numpy 2.5.4, pandas 2.3.3, ta 0.11.0):
-#26 16 passed, #28 46 passed, #31 24 passed, #30 10 passed. **Not repeated** against
-#26 `60db7a6c`.
+#26 16 passed, #28 46 passed, #31 24 passed, #30 10 passed.
+
+Repeated against #26 `60db7a6c`: **that head does not run**. Two files end with a
+pasted tool-output line (`[executed on device: iMac-3.local (...)]`), so
+`pytest tests` stops with `1 error` at collection. With those two lines removed
+(#38): #26 29 passed, #28 merged with it 59 passed, #31 merged with it 37 passed.
 
 ## Pull requests opened in this session
 
@@ -27,6 +31,9 @@ locally into its dependants (isolated venv: numpy 2.5.4, pandas 2.3.3, ta 0.11.0
 | #34 | `test/tool01-backtest-metrics-oracle-20261111` | #33 | `2e71d8e5` | `performance` and `statistics` blocks vs metric oracle; seventeen scenarios, 365 and 252 bars/year | 51 + 2 skipped / 53 |
 | #35 | `feature/tool01-backtest-evidence-envelope-v1-20261111` | #34 | `9e5aba21` | Versioned allowlisted evidence envelope `kairos_fincept_backtest_evidence_v1` | 66 + 2 skipped / 68 |
 | #36 | `test/qa-local-qt-unit-harness-20261111` | `main` | `3aa74f29` | Native Qt harness (upstream test CMake unmodified) + exact reference for the C++ `IndicatorEngine` | Qt 6.8.3: 16 + 15 + 8 + 40 QtTest passed; 6 Python passed |
+
+| #38 | `fix/pr26-stray-device-log-lines-20261111` | #26 | `4f619082` | Removes the two stray lines that break #26's head | `1 error` before, 29 passed after |
+| #37 | `docs/tool01-qa-local-checkpoint-20261111` | `main` | this file | Checkpoint | — |
 
 No original Fincept file is modified by any of them.
 
@@ -77,7 +84,8 @@ QT_QPA_PLATFORM=offscreen ctest --test-dir <build> -E tst_order_validator
 
 Suggested next priorities, in order:
 
-1. Re-run the #27–#31 suites against #26 `60db7a6c` (it moved again).
+1. #26's owner takes #38 (or removes the two lines itself), then #27–#31 are
+   updated onto the repaired head.
 2. Multi-asset path of the backtest provider (per-symbol allocation, combined
    equity on the common index) against the oracle.
 3. ADX and Supertrend in the C++ reference suite; edge cases.

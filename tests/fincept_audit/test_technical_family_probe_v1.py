@@ -12,7 +12,7 @@ import unittest
 
 from tools.fincept_audit.technical_family_probe_v1 import (
     PINNED_MODULES, SOURCE_RELATIVE, TechnicalProbeError,
-    run_all,
+    run_all, _load_pinned_module,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,6 +33,41 @@ class OriginalTechnicalFunctionTests(unittest.TestCase):
             [x["sparse_inactive_at_last_bar"] for x in result["modules"]],
             [[], [], ["psar_down"], [], []],
         )
+
+    def test_loader_executes_verified_bytes_despite_matching_stale_pyc(self):
+        from hashlib import sha256
+        import importlib.util
+        import os
+        import py_compile
+
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "volatility_indicators.py"
+            stale = b"SOURCE_MARKER = 'cached'\n"
+            verified = b"SOURCE_MARKER = 'source'\n"
+            self.assertEqual(len(stale), len(verified))
+            path.write_bytes(stale)
+            stamp = 1700000000
+            os.utime(path, (stamp, stamp))
+            cache_path = Path(importlib.util.cache_from_source(str(path)))
+            py_compile.compile(str(path), cfile=str(cache_path), doraise=True,
+                               invalidation_mode=py_compile.PycInvalidationMode.TIMESTAMP)
+            cache_before = cache_path.read_bytes()
+            path.write_bytes(verified)
+            os.utime(path, (stamp, stamp))
+            module = _load_pinned_module(path, "volatility", sha256(verified).hexdigest())
+            self.assertEqual(module.SOURCE_MARKER, "source")
+            self.assertEqual(cache_path.read_bytes(), cache_before)
+
+    def test_loader_does_not_create_bytecode_cache(self):
+        from hashlib import sha256
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "volatility_indicators.py"
+            source = b"SOURCE_MARKER = 'source'\n"
+            path.write_bytes(source)
+            module = _load_pinned_module(path, "volatility", sha256(source).hexdigest())
+            self.assertEqual(module.SOURCE_MARKER, "source")
+            self.assertEqual(sorted(p.name for p in Path(directory).iterdir()),
+                             ["volatility_indicators.py"])
 
     def test_mutating_original_ohlcv_denied(self):
         from unittest.mock import patch

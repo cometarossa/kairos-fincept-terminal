@@ -54,6 +54,17 @@ int main(int argc, char** argv) {
            populated.last_navigation_exclusive,
            "positive navigation is exclusive and attempted once");
 
+    // A registered screen that never materialises must FAIL (return code 1).
+    // This intentionally exercises the real bounded 8-second deadline.
+    fincept::DockScreenRouter unbuilt;
+    unbuilt.registered << QStringLiteral("missing-widget");
+    unbuilt.materialize_on_navigation = false;
+    verify(fincept::run_screen_smoke_test(&unbuilt) == 1,
+           "registered screen without widget returns 1");
+    verify(unbuilt.inventory_reads == 1 && unbuilt.navigation_calls == 1 &&
+           unbuilt.last_navigation_exclusive,
+           "failed construction still attempted exactly one exclusive navigation");
+
     std::fprintf(stdout, "%d native QtCore assertion(s) failed\n", failed);
     return failed ? 1 : 0;
 }

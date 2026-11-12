@@ -41,7 +41,7 @@ def preserved(text):
     # Mask comments and literals in one lexical pass: // inside a quoted
     # URL or raw string is not a C++ comment and must not erase live code.
     lexical = re.compile(
-        r'R"(?P<delimiter>[A-Za-z0-9_]*)\\(.*?\\)(?P=delimiter)"|"(?:\\\\.|[^"\\\\])*"|/\\*.*?\\*/|//[^\\n]*',
+        r'R"(?P<delimiter>[A-Za-z0-9_]*)\(.*?\)(?P=delimiter)"|"(?:\\.|[^"\\])*"|/\*.*?\*/|//[^\n]*',
         flags=re.DOTALL,
     )
     def mask_non_code(match):

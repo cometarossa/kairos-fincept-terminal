@@ -1,0 +1,401 @@
+{
+  "external_convention": "TradingView documented Supertrend plus default Wilder/RMA ATR",
+  "fixtures": [
+    {
+      "comparison": {
+        "tradingview_documented_down_initial": {
+          "candidate_flips": [
+            [
+              43,
+              -1
+            ],
+            [
+              82,
+              1
+            ],
+            [
+              123,
+              -1
+            ],
+            [
+              165,
+              1
+            ]
+          ],
+          "direction_diff_count": 15,
+          "first_direction_diff": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17
+          ],
+          "line_diff_count": 190,
+          "reference_flips": [
+            [
+              25,
+              1
+            ],
+            [
+              43,
+              -1
+            ],
+            [
+              82,
+              1
+            ],
+            [
+              123,
+              -1
+            ],
+            [
+              165,
+              1
+            ]
+          ]
+        },
+        "tradingview_state_EMA_matched_seed": {
+          "candidate_flips": [
+            [
+              43,
+              -1
+            ],
+            [
+              82,
+              1
+            ],
+            [
+              123,
+              -1
+            ],
+            [
+              165,
+              1
+            ]
+          ],
+          "direction_diff_count": 0,
+          "first_direction_diff": [],
+          "line_diff_count": 0,
+          "reference_flips": [
+            [
+              43,
+              -1
+            ],
+            [
+              82,
+              1
+            ],
+            [
+              123,
+              -1
+            ],
+            [
+              165,
+              1
+            ]
+          ]
+        },
+        "tradingview_state_Wilder_matched_seed": {
+          "candidate_flips": [
+            [
+              43,
+              -1
+            ],
+            [
+              82,
+              1
+            ],
+            [
+              123,
+              -1
+            ],
+            [
+              165,
+              1
+            ]
+          ],
+          "direction_diff_count": 0,
+          "first_direction_diff": [],
+          "line_diff_count": 190,
+          "reference_flips": [
+            [
+              43,
+              -1
+            ],
+            [
+              82,
+              1
+            ],
+            [
+              123,
+              -1
+            ],
+            [
+              165,
+              1
+            ]
+          ]
+        }
+      },
+      "cpp_vs_fraction_direction_mismatches": 0,
+      "cpp_vs_fraction_max_abs_error": 2.842170943040401e-14,
+      "name": "reversals",
+      "native_prefixes": 190,
+      "synthetic_source_rows": 200
+    },
+    {
+      "comparison": {
+        "tradingview_documented_down_initial": {
+          "candidate_flips": [
+            [
+              45,
+              -1
+            ],
+            [
+              65,
+              1
+            ],
+            [
+              108,
+              -1
+            ],
+            [
+              127,
+              1
+            ],
+            [
+              139,
+              -1
+            ],
+            [
+              158,
+              1
+            ]
+          ],
+          "direction_diff_count": 67,
+          "first_direction_diff": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17
+          ],
+          "line_diff_count": 190,
+          "reference_flips": [
+            [
+              34,
+              1
+            ],
+            [
+              46,
+              -1
+            ],
+            [
+              66,
+              1
+            ],
+            [
+              77,
+              -1
+            ],
+            [
+              97,
+              1
+            ],
+            [
+              108,
+              -1
+            ],
+            [
+              128,
+              1
+            ],
+            [
+              139,
+              -1
+            ],
+            [
+              158,
+              1
+            ],
+            [
+              170,
+              -1
+            ],
+            [
+              190,
+              1
+            ]
+          ]
+        },
+        "tradingview_state_EMA_matched_seed": {
+          "candidate_flips": [
+            [
+              45,
+              -1
+            ],
+            [
+              65,
+              1
+            ],
+            [
+              108,
+              -1
+            ],
+            [
+              127,
+              1
+            ],
+            [
+              139,
+              -1
+            ],
+            [
+              158,
+              1
+            ]
+          ],
+          "direction_diff_count": 0,
+          "first_direction_diff": [],
+          "line_diff_count": 0,
+          "reference_flips": [
+            [
+              45,
+              -1
+            ],
+            [
+              65,
+              1
+            ],
+            [
+              108,
+              -1
+            ],
+            [
+              127,
+              1
+            ],
+            [
+              139,
+              -1
+            ],
+            [
+              158,
+              1
+            ]
+          ]
+        },
+        "tradingview_state_Wilder_matched_seed": {
+          "candidate_flips": [
+            [
+              45,
+              -1
+            ],
+            [
+              65,
+              1
+            ],
+            [
+              108,
+              -1
+            ],
+            [
+              127,
+              1
+            ],
+            [
+              139,
+              -1
+            ],
+            [
+              158,
+              1
+            ]
+          ],
+          "direction_diff_count": 43,
+          "first_direction_diff": [
+            45,
+            65,
+            77,
+            78,
+            79,
+            80,
+            81,
+            82
+          ],
+          "line_diff_count": 167,
+          "reference_flips": [
+            [
+              46,
+              -1
+            ],
+            [
+              66,
+              1
+            ],
+            [
+              77,
+              -1
+            ],
+            [
+              97,
+              1
+            ],
+            [
+              108,
+              -1
+            ],
+            [
+              128,
+              1
+            ],
+            [
+              139,
+              -1
+            ],
+            [
+              158,
+              1
+            ],
+            [
+              170,
+              -1
+            ],
+            [
+              190,
+              1
+            ]
+          ]
+        }
+      },
+      "cpp_vs_fraction_direction_mismatches": 0,
+      "cpp_vs_fraction_max_abs_error": 2.842170943040401e-14,
+      "name": "shock",
+      "native_prefixes": 190,
+      "synthetic_source_rows": 200
+    }
+  ],
+  "hard_limits": [
+    "synthetic_data_only",
+    "no_actual_trade",
+    "no_actual_market_signal",
+    "no_strategy_returns",
+    "no_PIT_admission",
+    "no_CI_authority"
+  ],
+  "indicator_engine_git_blob": "7d3c32ca4d9f4a265a77dbbe56d59b52129ecfb5",
+  "known_config_differences": {
+    "fincept_ATR": "EMA alpha=2/(period+1)",
+    "fincept_initial_direction": "up",
+    "tradingview_default_ATR": "RMA/Wilder alpha=1/period",
+    "tradingview_initial_direction": "down until ATR available"
+  },
+  "schema": "fincept_supertrend_external_convention_audit_v1",
+  "status": "RESEARCH_ONLY_NOT_PIT_NOT_TRADING"
+}

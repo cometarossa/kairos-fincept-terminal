@@ -46,3 +46,11 @@ account access, PIN clearing, or GitHub Actions enablement is required.
   earlier results do not certify this new test or the GUI.
 - No broker mutation, IG login, order, API key access, service restart, or
   scientific admission.
+
+## 2026-11-12 — bounded failed-construction branch test
+
+- Updated draft head immediately before this checkpoint: `b662834777699e0685c4804020dac8840cfaf7cc`.
+- Added a mock registered screen with `materialize_on_navigation=false` to exercise the **original C++ nonzero failure path** (`return 1`) after the 8000 ms construction deadline. The test also checks exactly one exclusive navigation. CTest now has a 30-second upper bound to avoid unbounded test workers.
+- **Combined Python source tests: 11/11 PASS on iMac** (seven PR #39 tests, four PR #42 tests). Input blobs were compared against the GitHub exact head: native C++ test `005bd7a9a61a110b8b9d14c4f27cda23a0954679`, Python contract `49a909b757e97043fdc1ced6f64dd0a9dc3e21f7`, CMake `9266863a6dd62ad2b3998fa0fc55e4ccf2a56ffd`.
+- **Native Qt6 configure failed due missing `Qt6Config.cmake` (version 6.8.3)** on iMac, with CMake 4.0.1. ZimaBlade x86_64 did not expose `cmake`, `qtpaths6`, `Qt6Core` or `Qt6Config.cmake` in the bounded paths examined. This is a **toolchain blocker**, not a native test PASS or test-code failure. Debian guest access and running GUI process state were not revalidated.
+- Prior 3/3 source-only figure on this page is historical; the exact-head combined result above supersedes it. No Qt library installation, running application restart, broker connection, PIN action or trade.

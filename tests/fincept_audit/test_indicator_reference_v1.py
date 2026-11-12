@@ -67,14 +67,12 @@ class ReferenceTableTests(unittest.TestCase):
                 low, high = bounded[(name, key)]
                 self.assertTrue(low <= current <= high and low <= previous <= high, (name, key))
 
-    def test_known_engine_defects_are_the_only_non_match_rows(self):
-        self.assertEqual(ref.CHECKS, {("ADX", "plus_di"): "current_only",
-                                      ("ADX", "minus_di"): "current_only",
-                                      ("SUPERTREND", "value"): "diverges"})
-        keys = {(r[0], r[2]) for r in ref.reference()}
-        self.assertTrue(set(ref.CHECKS) <= keys)
+    def test_all_40_reference_rows_require_both_bars_to_match(self):
+        self.assertEqual(ref.CHECKS, {})
         table = ref.cpp_table()
-        self.assertEqual(table.count('"match"},'), 37)
+        self.assertEqual(table.count('"match"},'), 40)
+        self.assertNotIn('"current_only"},', table)
+        self.assertNotIn('"diverges"},', table)
 
     def test_textbook_supertrend_lower_band_never_falls_while_long(self):
         # The defining property the engine violates: in an uptrend the line is the

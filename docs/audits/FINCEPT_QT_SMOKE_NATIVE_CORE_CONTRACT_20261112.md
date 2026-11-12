@@ -40,7 +40,7 @@ account access, PIN clearing, or GitHub Actions enablement is required.
 - **3/3 Python source-contract tests PASS on iMac (2026-11-12)** using an isolated file tree populated from the GitHub branch; no install. Git blob hashes checked for CMake (`c22c6354e8fa8664c0935a49099f1f265c72be52`), source test (`a82a4366c4474aeae78dcd7fce6f512dc214cb3b`) and original Qt smoke C++ (`8eaa31502b00aea5fc7585ecdc2c09eb4a56e06f`). These are **not C++ runtime tests**.
 - Original Fincept DRAFT #39 separately has **7/7 source tests PASS** at exact
   `7c2e29d2` on iMac.
-- As of creation: **native QtCore build NOT RUN** because no authorized
+- At creation (historical, superseded below): **native QtCore build NOT RUN** because no authorized
   Qt6 toolchain with repository checkout has yet been verified.
 - DRAFT #36 provides a separate Qt unit harness for indicators on Ubuntu; its
   earlier results do not certify this new test or the GUI.
@@ -54,3 +54,18 @@ account access, PIN clearing, or GitHub Actions enablement is required.
 - **Combined Python source tests: 11/11 PASS on iMac** (seven PR #39 tests, four PR #42 tests). Input blobs were compared against the GitHub exact head: native C++ test `005bd7a9a61a110b8b9d14c4f27cda23a0954679`, Python contract `49a909b757e97043fdc1ced6f64dd0a9dc3e21f7`, CMake `9266863a6dd62ad2b3998fa0fc55e4ccf2a56ffd`.
 - **Native Qt6 configure failed due missing `Qt6Config.cmake` (version 6.8.3)** on iMac, with CMake 4.0.1. ZimaBlade x86_64 did not expose `cmake`, `qtpaths6`, `Qt6Core` or `Qt6Config.cmake` in the bounded paths examined. This is a **toolchain blocker**, not a native test PASS or test-code failure. Debian guest access and running GUI process state were not revalidated.
 - Prior 3/3 source-only figure on this page is historical; the exact-head combined result above supersedes it. No Qt library installation, running application restart, broker connection, PIN action or trade.
+
+## 2026-11-12 — **native QtCore C++ run VERIFIED on isolated macOS toolchain**
+
+- **Source/test commit for execution:** PR #42 head `e45d561551b292aea59c93fbe8921cc944f6c32a`. This checkpoint is a docs-only follow-up; for any later head, distinguish artifact/source identity from commit identity.
+- Installed **official Qt 6.8.3 `qtbase` SDK** using `aqtinstall 3.3.0`, via the vendor archive and verified manifest, under an isolated Mac QA cache (no system-wide Qt installation). SDK package: `mac desktop 6.8.3 clang_64 --archives qtbase`; `Qt6Config.cmake` was available and `qmake -query QT_VERSION` returned `6.8.3`.
+- **Native CMake configure PASS**, with CMake 4.0.1 and AppleClang 16; **native C++ compile/link PASS**. The build compile command proves it compiled Fincept's actual `fincept-qt/src/app/ScreenSmokeTest.cpp` (Git blob `8eaa31502b00aea5fc7585ecdc2c09eb4a56e06f`) with QtCore and three disposable dependency headers, not a rewritten test copy. `otool -L` confirms linkage against `QtCore.framework` version 6.8.3.
+- **Native CTest 1/1 PASS, 9/9 assertions PASS** in ~8.28 seconds. The five functional branches are: null router -> 2, mock PIN lock -> 3 before registry read, empty registry -> 4 without navigation, one fake materialised screen -> 0 and exactly one exclusive navigation, one never-materialised fake screen -> 1 after the original 8,000 ms deadline. The other assertions test short-circuiting and navigation counters.
+- **Negative control against original fork `main` at `7716ee86`:** compiled the unmodified pre-fix `ScreenSmokeTest.cpp` (blob `f5d3b44574b974d381dfe00ef807d576a29919a2`) with the **same** disposable QtCore harness in a separate temporary directory. **CTest 0/1, expected FAIL**: `[Smoke] OK: all 0 screens constructed` plus `FAIL: zero registered screens returns 4, not success`. The script independently checked the exact expected failing assertion before marking the negative control successful. The temporary build directory was removed after the test.
+- The native test binary SHA-256 was `13c25020230b48471bcc9cecabb02a53ef5bf331db27810f72359e178ed42b6f` in the isolated build. The combined Python source tests were independently rerun: **11/11 PASS**. No broker or profile interaction.
+
+### Native evidence boundaries
+
+**Validated:** actual compiled production smoke *control flow* for the five cases using real Qt6 Core; guards are fail-closed, and the prior bug is detected by an independently rebuilt negative baseline.
+
+**NOT VALIDATED:** real `DockScreenRouter` (it is a stub), Qt Widgets, showEvent, Qt WebEngine, the 52 real registered GUI screens, the live running Fincept application, the hybrid KAIROS interface, PIN persistence or broker wiring. The Qt SDK download does not constitute GUI certification or change any release/trading permission. Keep PR #42 DRAFT, subordinate to PR #39. Fork CI has not been executed.

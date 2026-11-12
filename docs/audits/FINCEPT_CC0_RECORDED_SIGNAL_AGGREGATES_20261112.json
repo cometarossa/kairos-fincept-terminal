@@ -1,0 +1,288 @@
+{
+  "archive_sha256": "d9317c8fb2d63b9b00db5f933b6c9639d2bf7ea3b918169bb5cec5903dce85a1",
+  "candidate_engine_git_blob": "7d3c32ca4d9f4a265a77dbbe56d59b52129ecfb5",
+  "data_cutoff_convention": "retrospectively_adjusted_NOT_point_in_time",
+  "instruments": [
+    {
+      "changed_dates_any_rule": 567,
+      "crc32": 3021795949,
+      "input_sha256": "fac5f8d07174dc27acb06485a71a7d9cd06909b1f6a3baa2c8d1877f1c065840",
+      "member": "Stocks/aapl.us.txt",
+      "replay_first": "2015-01-02",
+      "replay_last": "2017-11-10",
+      "replay_rows": 722,
+      "rules": [
+        {
+          "changed": 0,
+          "fixed_only": 0,
+          "fixed_true": 29,
+          "old_only": 0,
+          "old_true": 29,
+          "rule": "ADX_DI_CROSS_UP"
+        },
+        {
+          "changed": 0,
+          "fixed_only": 0,
+          "fixed_true": 28,
+          "old_only": 0,
+          "old_true": 28,
+          "rule": "ADX_DI_CROSS_DOWN"
+        },
+        {
+          "changed": 231,
+          "fixed_only": 29,
+          "fixed_true": 102,
+          "old_only": 202,
+          "old_true": 275,
+          "rule": "ST_VALUE_FALLING"
+        },
+        {
+          "changed": 301,
+          "fixed_only": 10,
+          "fixed_true": 166,
+          "old_only": 291,
+          "old_true": 447,
+          "rule": "ST_VALUE_RISING"
+        },
+        {
+          "changed": 12,
+          "fixed_only": 12,
+          "fixed_true": 12,
+          "old_only": 0,
+          "old_true": 0,
+          "rule": "ST_DIRECTION_UP_CROSS"
+        },
+        {
+          "changed": 11,
+          "fixed_only": 11,
+          "fixed_true": 11,
+          "old_only": 0,
+          "old_true": 0,
+          "rule": "ST_DIRECTION_DOWN_CROSS"
+        },
+        {
+          "changed": 366,
+          "fixed_only": 0,
+          "fixed_true": 356,
+          "old_only": 366,
+          "old_true": 722,
+          "rule": "ST_LONG_STATE"
+        },
+        {
+          "changed": 366,
+          "fixed_only": 0,
+          "fixed_true": 356,
+          "old_only": 366,
+          "old_true": 722,
+          "rule": "ST_LINE_BELOW_CLOSE"
+        },
+        {
+          "changed": 366,
+          "fixed_only": 366,
+          "fixed_true": 366,
+          "old_only": 0,
+          "old_true": 0,
+          "rule": "ST_LINE_ABOVE_CLOSE"
+        }
+      ],
+      "signal_changes": 1653,
+      "source_first": "2014-01-02",
+      "source_last": "2017-11-10",
+      "source_rows": 974,
+      "symbol": "AAPL",
+      "unchanged_dates_all_rules": 155
+    },
+    {
+      "changed_dates_any_rule": 608,
+      "crc32": 2247021503,
+      "input_sha256": "ebeb652f41e3902dd8d32bbe291bccab5bf1bbdbe17dbb40fcf3cc18e90c94e5",
+      "member": "Stocks/ibm.us.txt",
+      "replay_first": "2015-01-02",
+      "replay_last": "2017-11-10",
+      "replay_rows": 722,
+      "rules": [
+        {
+          "changed": 0,
+          "fixed_only": 0,
+          "fixed_true": 28,
+          "old_only": 0,
+          "old_true": 28,
+          "rule": "ADX_DI_CROSS_UP"
+        },
+        {
+          "changed": 0,
+          "fixed_only": 0,
+          "fixed_true": 27,
+          "old_only": 0,
+          "old_true": 27,
+          "rule": "ADX_DI_CROSS_DOWN"
+        },
+        {
+          "changed": 282,
+          "fixed_only": 44,
+          "fixed_true": 117,
+          "old_only": 238,
+          "old_true": 311,
+          "rule": "ST_VALUE_FALLING"
+        },
+        {
+          "changed": 308,
+          "fixed_only": 11,
+          "fixed_true": 125,
+          "old_only": 297,
+          "old_true": 411,
+          "rule": "ST_VALUE_RISING"
+        },
+        {
+          "changed": 10,
+          "fixed_only": 10,
+          "fixed_true": 10,
+          "old_only": 0,
+          "old_true": 0,
+          "rule": "ST_DIRECTION_UP_CROSS"
+        },
+        {
+          "changed": 11,
+          "fixed_only": 11,
+          "fixed_true": 11,
+          "old_only": 0,
+          "old_true": 0,
+          "rule": "ST_DIRECTION_DOWN_CROSS"
+        },
+        {
+          "changed": 423,
+          "fixed_only": 0,
+          "fixed_true": 299,
+          "old_only": 423,
+          "old_true": 722,
+          "rule": "ST_LONG_STATE"
+        },
+        {
+          "changed": 423,
+          "fixed_only": 0,
+          "fixed_true": 299,
+          "old_only": 423,
+          "old_true": 722,
+          "rule": "ST_LINE_BELOW_CLOSE"
+        },
+        {
+          "changed": 423,
+          "fixed_only": 423,
+          "fixed_true": 423,
+          "old_only": 0,
+          "old_true": 0,
+          "rule": "ST_LINE_ABOVE_CLOSE"
+        }
+      ],
+      "signal_changes": 1880,
+      "source_first": "2014-01-02",
+      "source_last": "2017-11-10",
+      "source_rows": 974,
+      "symbol": "IBM",
+      "unchanged_dates_all_rules": 114
+    },
+    {
+      "changed_dates_any_rule": 561,
+      "crc32": 2487404040,
+      "input_sha256": "012248c39533d9d6825d4601271968b97aa122193644a0660dbeaab41a5b53cc",
+      "member": "ETFs/spy.us.txt",
+      "replay_first": "2015-01-02",
+      "replay_last": "2017-11-10",
+      "replay_rows": 722,
+      "rules": [
+        {
+          "changed": 0,
+          "fixed_only": 0,
+          "fixed_true": 40,
+          "old_only": 0,
+          "old_true": 40,
+          "rule": "ADX_DI_CROSS_UP"
+        },
+        {
+          "changed": 0,
+          "fixed_only": 0,
+          "fixed_true": 40,
+          "old_only": 0,
+          "old_true": 40,
+          "rule": "ADX_DI_CROSS_DOWN"
+        },
+        {
+          "changed": 258,
+          "fixed_only": 13,
+          "fixed_true": 50,
+          "old_only": 245,
+          "old_true": 282,
+          "rule": "ST_VALUE_FALLING"
+        },
+        {
+          "changed": 287,
+          "fixed_only": 10,
+          "fixed_true": 173,
+          "old_only": 277,
+          "old_true": 440,
+          "rule": "ST_VALUE_RISING"
+        },
+        {
+          "changed": 12,
+          "fixed_only": 12,
+          "fixed_true": 12,
+          "old_only": 0,
+          "old_true": 0,
+          "rule": "ST_DIRECTION_UP_CROSS"
+        },
+        {
+          "changed": 12,
+          "fixed_only": 12,
+          "fixed_true": 12,
+          "old_only": 0,
+          "old_true": 0,
+          "rule": "ST_DIRECTION_DOWN_CROSS"
+        },
+        {
+          "changed": 286,
+          "fixed_only": 0,
+          "fixed_true": 436,
+          "old_only": 286,
+          "old_true": 722,
+          "rule": "ST_LONG_STATE"
+        },
+        {
+          "changed": 286,
+          "fixed_only": 0,
+          "fixed_true": 436,
+          "old_only": 286,
+          "old_true": 722,
+          "rule": "ST_LINE_BELOW_CLOSE"
+        },
+        {
+          "changed": 286,
+          "fixed_only": 286,
+          "fixed_true": 286,
+          "old_only": 0,
+          "old_true": 0,
+          "rule": "ST_LINE_ABOVE_CLOSE"
+        }
+      ],
+      "signal_changes": 1427,
+      "source_first": "2014-01-02",
+      "source_last": "2017-11-10",
+      "source_rows": 974,
+      "symbol": "SPY",
+      "unchanged_dates_all_rules": 161
+    }
+  ],
+  "original_engine_git_blob": "cf454fff4dc204a45248bc285f72fd38745e68b7",
+  "prohibited_claims": [
+    "alpha",
+    "strategy_PnL",
+    "strategy_trade_count",
+    "broker_fitness",
+    "PIT_certification",
+    "real_market_2018_plus"
+  ],
+  "schema": "fincept_recorded_signal_comparison_v1",
+  "source": "Kaggle CC0 Huge Stock Market Dataset, 2017",
+  "source_limit": "2017-11-10",
+  "status": "DEVELOPMENT_DIAGNOSTICS_ONLY",
+  "unchanged_consumer_git_blob": "1ae2adbd70fa143f528928338184da336ca0bc6d"
+}

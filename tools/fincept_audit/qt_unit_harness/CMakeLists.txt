@@ -40,3 +40,9 @@ add_subdirectory("${FINCEPT_QT_DIR}/tests" fincept_tests)
 fincept_add_test(tst_indicator_engine_reference
     "${CMAKE_CURRENT_SOURCE_DIR}/tst_indicator_engine_reference.cpp"
     "${FINCEPT_QT_DIR}/src/algo_engine/IndicatorEngine.cpp")
+
+# Isolated property-based temporal probes for known ADX/ Supertrend bugs.
+fincept_add_test(tst_indicator_temporal_contracts
+    "${CMAKE_CURRENT_SOURCE_DIR}/tst_indicator_temporal_contracts.cpp"
+    "${FINCEPT_QT_DIR}/src/algo_engine/IndicatorEngine.cpp")
+set_tests_properties(tst_indicator_temporal_contracts PROPERTIES TIMEOUT 30)

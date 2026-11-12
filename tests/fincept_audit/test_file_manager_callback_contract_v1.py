@@ -38,14 +38,15 @@ def preserved(text):
         body = strip_disabled_cpp(body)
     except ValueError:
         return False
-    # Comments cannot satisfy a source-preservation contract.
-    body = re.sub(r"/\*.*?\*/|//[^\n]*", "", body, flags=re.DOTALL)
-    # Literal text must not impersonate executable C++ callback statements.
-    body = re.sub(r'R"(?P<delimiter>[A-Za-z0-9_]*)\(.*?\)(?P=delimiter)"', " ", body, flags=re.DOTALL)
-    # Preserve only the expected route-name literal as a distinct sentinel.
-    def mask_quoted(match):
+    # Mask comments and literals in one lexical pass: // inside a quoted
+    # URL or raw string is not a C++ comment and must not erase live code.
+    lexical = re.compile(
+        r'R"(?P<delimiter>[A-Za-z0-9_]*)\\(.*?\\)(?P=delimiter)"|"(?:\\\\.|[^"\\\\])*"|/\\*.*?\\*/|//[^\\n]*',
+        flags=re.DOTALL,
+    )
+    def mask_non_code(match):
         return "__CODE_EDITOR_LITERAL__" if match.group(0) == '"code_editor"' else " "
-    body = re.sub(r'"(?:\\.|[^"\\])*"', mask_quoted, body)
+    body = lexical.sub(mask_non_code, body)
     tokens = (
         "new screens::FileManagerScreen;",
         "connect(fm, &screens::FileManagerScreen::open_file_in_screen, this,",
@@ -136,6 +137,20 @@ class FileManagerSourceContractTests(unittest.TestCase):
                 altered = original.replace(token, "auto inert = " + literal + ";", 1)
                 self.assertNotEqual(altered, original)
                 self.assertFalse(preserved(altered))
+
+    def test_comment_markers_inside_literals_preserve_live_navigation(self):
+        original = SOURCE.read_text(encoding="utf-8-sig")
+        self.assertTrue(preserved(original))
+        token = "dock_router_->navigate(route_id);"
+        self.assertIn(token, original)
+        for prefix in (
+            'auto url = "https://example.invalid/path"; ',
+            'auto raw = R"tag(// not a comment)tag"; ',
+            'auto quoted = "/* not a comment */"; ',
+        ):
+            with self.subTest(prefix=prefix):
+                altered = original.replace(token, prefix + token, 1)
+                self.assertTrue(preserved(altered))
 
     def test_opt_in_factory_allowed(self):
         original = SOURCE.read_text(encoding="utf-8-sig")

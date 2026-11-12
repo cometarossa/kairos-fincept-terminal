@@ -1,0 +1,26 @@
+cmake_minimum_required(VERSION 3.27)
+project(FinceptRecordedIndicatorReplay LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_AUTOMOC ON)
+find_package(Qt6 6.8.3 EXACT REQUIRED COMPONENTS Core Gui)
+get_filename_component(FINCEPT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../../fincept-qt/src" ABSOLUTE)
+set(OLD_INDICATOR_ENGINE_SOURCE "" CACHE FILEPATH "Pinned unchanged Fincept main IndicatorEngine.cpp")
+if(NOT EXISTS "${OLD_INDICATOR_ENGINE_SOURCE}")
+    message(FATAL_ERROR "Provide the original IndicatorEngine.cpp via -DOLD_INDICATOR_ENGINE_SOURCE. Do not substitute an unverified source.")
+endif()
+set(COMMON_CONSUMER
+    "${CMAKE_CURRENT_SOURCE_DIR}/recorded_conditions.cpp"
+    "${FINCEPT_SOURCE_DIR}/algo_engine/ConditionEvaluator.cpp")
+foreach(engine IN ITEMS old candidate)
+    if(engine STREQUAL "old")
+        set(ENGINE_CPP "${OLD_INDICATOR_ENGINE_SOURCE}")
+    else()
+        set(ENGINE_CPP "${FINCEPT_SOURCE_DIR}/algo_engine/IndicatorEngine.cpp")
+    endif()
+    add_executable(recorded_replay_${engine}
+        ${COMMON_CONSUMER}
+        "${ENGINE_CPP}")
+    target_include_directories(recorded_replay_${engine} PRIVATE "${FINCEPT_SOURCE_DIR}")
+    target_link_libraries(recorded_replay_${engine} PRIVATE Qt6::Core Qt6::Gui)
+endforeach()

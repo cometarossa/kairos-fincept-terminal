@@ -58,3 +58,19 @@ Rebuilt both extra upstream targets with Qt6.8.3 AppleClang and ran all buildabl
 - `tst_indicator_engine` — PASS, upstream indicator unit tests.
 
 **Native CTest 5/5 PASS; Python source/reference suite 15/15 PASS** in the same local QA run, with eight modified/new file blob identities rechecked against the GitHub branch contents before the run. The actual `tst_order_validator` C++ target remains a pre-existing upstream compile blocker and was **not built or run**; no broker risk-gate modification or bypass was attempted. No full FinceptTerminal binary, full GUI, broker runtime, strategy P&L, cross-platform Linux CI, or KAIROS hybrid was validated. Fork Actions remained disabled/not verified. DRAFT / NO MERGE.
+
+## 2026-11-12 — real ConditionEvaluator signal-impact check (important qualification)
+
+A read-only review of original `fincept-qt/src/algo_engine/ConditionEvaluator.cpp`, pinned Git blob `1ae2adbd70fa143f528928338184da336ca0bc6d`, found that `operand_value` **does not use `IndicatorResult.previous`**. For operations such as `crosses_above` / `crosses_below`, it recomputes `IndicatorEngine::compute(...)` on the candle prefix truncated by one bar and reads `r.current`. This substantially limits the interpretation of the **20 masked crosses** diagnosed through the `IndicatorResult.previous` map: it is an API-field defect, **not proof of 20 missed strategy events**.
+
+To validate the actual consumer path, an isolated native `tst_indicator_consumer_fix` now compiles **the unchanged real `ConditionEvaluator.cpp`** plus the original `AlgoTradingTypes.h` and the candidate `IndicatorEngine.cpp` against Qt6 Core/Gui/Test (the extra Gui link is required by the original QColor header). No broker adapter, order or application is instantiated.
+
+On the pinned 120-candle synthetic fixture:
+
+- **ADX:** with the **old engine**, real ConditionEvaluator registers **10 crosses_above and 10 crosses_below = 20/20 legitimate crossovers**. The corrected candidate registers the **same 20/20**. Thus this consumer already bypassed the old defective `previous` map; the fix improves the API field for other potential clients, but does not by itself restore 20 missed crossings here.
+- **Supertrend:** real ConditionEvaluator `falling` on the long-side line triggers **65 times in 106 long-to-long transitions on the old engine**, but **0 times on the candidate**. This is evidence of a changed *synthetic condition result*, not a trade/PNL measurement.
+- **Positive native integration 1/1 PASS, 4/4 QtTest assertions/cases** including setup/cleanup, with original consumer source blob equality checked in a new Python test.
+- **Negative control on old engine:** rebuilding the *same* consumer test with the exact unmodified main engine `cf454fff4dc204a45248bc285f72fd38745e68b7` produces **ADX condition PASS** and **Supertrend condition FAIL**, and verifies both named results. Temporary build cleaned.
+- Updated cumulative local exact-source evidence: **native CTest 6/6 PASS** (`tst_indicator_engine`, `tst_indicator_engine_reference`, `tst_indicator_temporal_contracts`, `tst_indicator_consumer_fix`, `tst_result`, `tst_broker_modify_fields`) and **18/18 Python reference/provenance tests PASS**. `tst_order_validator` was not built or run. The compiled ConditionEvaluator is not changed and no trading path is invoked.
+
+**Required review implication:** the ADX `previous` map bug is real, but the standard `ConditionEvaluator` crossings should not be counted as missed trading events without inspecting other consumers. Supertrend's current values reach the evaluator and can change strategy condition evaluations. Any actual strategy signal or historical P&L impact remains NOT_VERIFIED until approved recorded-data replay and independent review.

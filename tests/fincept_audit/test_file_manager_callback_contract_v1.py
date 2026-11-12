@@ -6,12 +6,38 @@ import unittest
 SOURCE = Path(__file__).resolve().parents[2] / "fincept-qt/src/app/WindowFrame_Setup.cpp"
 
 
+def strip_disabled_cpp(text):
+    """Fail closed on unsupported inactive preprocessor branches (source-only)."""
+    output, depth = [], 0
+    for line in text.splitlines(keepends=True):
+        if re.match(r"^\\s*#\\s*if\\s+0\\s*(?://.*)?$", line.strip()):
+            depth += 1
+            continue
+        if depth:
+            if re.match(r"^\\s*#\\s*(if|ifdef|ifndef)\\b", line):
+                depth += 1
+            elif re.match(r"^\\s*#\\s*endif\\b", line):
+                depth -= 1
+            elif depth == 1 and re.match(r"^\\s*#\\s*(else|elif)\\b", line):
+                raise ValueError("unsupported #if 0 alternate branch")
+            continue
+        output.append(line)
+    if depth:
+        raise ValueError("unterminated #if 0")
+    return "".join(output)
+
+
 def preserved(text):
     start = text.find('register_factory("file_manager"')
     end = text.find("register_factory(", start + 1)
     if start < 0 or end < 0:
         return False
     body = text[start:end]
+    # Disabled preprocessor branches cannot satisfy a source contract.
+    try:
+        body = strip_disabled_cpp(body)
+    except ValueError:
+        return False
     # Comments cannot satisfy a source-preservation contract.
     body = re.sub(r"/\*.*?\*/|//[^\n]*", "", body, flags=re.DOTALL)
     tokens = (
@@ -61,6 +87,17 @@ class FileManagerSourceContractTests(unittest.TestCase):
         altered = original.replace(
             "dock_router_->navigate(route_id);",
             "// dock_router_->navigate(route_id);",
+            1,
+        )
+        self.assertNotEqual(altered, original)
+        self.assertFalse(preserved(altered))
+
+    def test_preprocessor_disabled_navigation_rejected(self):
+        original = SOURCE.read_text(encoding="utf-8-sig")
+        self.assertTrue(preserved(original))
+        altered = original.replace(
+            "dock_router_->navigate(route_id);",
+            "#if 0\\n                    dock_router_->navigate(route_id);\\n                    #endif",
             1,
         )
         self.assertNotEqual(altered, original)

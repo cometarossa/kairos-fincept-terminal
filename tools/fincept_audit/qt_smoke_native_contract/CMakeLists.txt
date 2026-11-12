@@ -32,3 +32,5 @@ target_link_libraries(fincept_smoke_native_contract PRIVATE Qt6::Core)
 
 enable_testing()
 add_test(NAME fincept_smoke_native_contract COMMAND fincept_smoke_native_contract)
+# One intentional failed construction uses the original 8000 ms deadline.
+set_tests_properties(fincept_smoke_native_contract PROPERTIES TIMEOUT 30)

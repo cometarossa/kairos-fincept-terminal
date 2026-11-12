@@ -40,6 +40,8 @@ def preserved(text):
         return False
     # Comments cannot satisfy a source-preservation contract.
     body = re.sub(r"/\*.*?\*/|//[^\n]*", "", body, flags=re.DOTALL)
+    # Raw C++ string literals are data, never executable callback statements.
+    body = re.sub(r'R"(?P<delimiter>[A-Za-z0-9_]*)\(.*?\)(?P=delimiter)"', " ", body, flags=re.DOTALL)
     tokens = (
         "new screens::FileManagerScreen;",
         "connect(fm, &screens::FileManagerScreen::open_file_in_screen, this,",
@@ -102,6 +104,20 @@ class FileManagerSourceContractTests(unittest.TestCase):
         )
         self.assertNotEqual(altered, original)
         self.assertFalse(preserved(altered))
+
+    def test_raw_string_cannot_impersonate_navigation(self):
+        original = SOURCE.read_text(encoding="utf-8-sig")
+        self.assertTrue(preserved(original))
+        token = "dock_router_->navigate(route_id);"
+        self.assertIn(token, original)
+        for literal in (
+            'R"(dock_router_->navigate(route_id);)"',
+            'R"sentinel(dock_router_->navigate(route_id);)sentinel"',
+        ):
+            with self.subTest(literal=literal):
+                altered = original.replace(token, "auto inert = " + literal + ";", 1)
+                self.assertNotEqual(altered, original)
+                self.assertFalse(preserved(altered))
 
     def test_opt_in_factory_allowed(self):
         original = SOURCE.read_text(encoding="utf-8-sig")

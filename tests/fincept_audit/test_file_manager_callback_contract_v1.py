@@ -40,13 +40,17 @@ def preserved(text):
         return False
     # Comments cannot satisfy a source-preservation contract.
     body = re.sub(r"/\*.*?\*/|//[^\n]*", "", body, flags=re.DOTALL)
-    # Raw C++ string literals are data, never executable callback statements.
+    # Literal text must not impersonate executable C++ callback statements.
     body = re.sub(r'R"(?P<delimiter>[A-Za-z0-9_]*)\(.*?\)(?P=delimiter)"', " ", body, flags=re.DOTALL)
+    # Preserve only the expected route-name literal as a distinct sentinel.
+    def mask_quoted(match):
+        return "__CODE_EDITOR_LITERAL__" if match.group(0) == '"code_editor"' else " "
+    body = re.sub(r'"(?:\\.|[^"\\])*"', mask_quoted, body)
     tokens = (
         "new screens::FileManagerScreen;",
         "connect(fm, &screens::FileManagerScreen::open_file_in_screen, this,",
         "dock_router_->navigate(route_id);",
-        'route_id == "code_editor" && !file_path.isEmpty()',
+        "route_id == __CODE_EDITOR_LITERAL__ && !file_path.isEmpty()",
         "dock_router_->materialize_now(route_id);",
         "nb->open_notebook_path(file_path);",
     )
@@ -113,6 +117,20 @@ class FileManagerSourceContractTests(unittest.TestCase):
         for literal in (
             'R"(dock_router_->navigate(route_id);)"',
             'R"sentinel(dock_router_->navigate(route_id);)sentinel"',
+        ):
+            with self.subTest(literal=literal):
+                altered = original.replace(token, "auto inert = " + literal + ";", 1)
+                self.assertNotEqual(altered, original)
+                self.assertFalse(preserved(altered))
+
+    def test_ordinary_string_cannot_impersonate_navigation(self):
+        original = SOURCE.read_text(encoding="utf-8-sig")
+        self.assertTrue(preserved(original))
+        token = "dock_router_->navigate(route_id);"
+        self.assertIn(token, original)
+        for literal in (
+            '"dock_router_->navigate(route_id);"',
+            '"prefix \\" dock_router_->navigate(route_id); suffix"',
         ):
             with self.subTest(literal=literal):
                 altered = original.replace(token, "auto inert = " + literal + ";", 1)

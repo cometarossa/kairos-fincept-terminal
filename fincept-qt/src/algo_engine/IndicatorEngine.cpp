@@ -546,7 +546,14 @@ IndicatorResult IndicatorEngine::compute_adx(const QVector<double>& high, const 
     };
 
     dx_vals.append(calc_dx());
+    // Capture Wilder-smoothed sums from the immediately prior bar.
+    double atr_prev_smooth = atr_smooth;
+    double plus_prev_smooth = plus_smooth;
+    double minus_prev_smooth = minus_smooth;
     for (int i = period + 1; i < n; ++i) {
+        atr_prev_smooth = atr_smooth;
+        plus_prev_smooth = plus_smooth;
+        minus_prev_smooth = minus_smooth;
         atr_smooth = atr_smooth - atr_smooth / period + tr[i];
         plus_smooth = plus_smooth - plus_smooth / period + plus_dm[i];
         minus_smooth = minus_smooth - minus_smooth / period + minus_dm[i];
@@ -583,8 +590,10 @@ IndicatorResult IndicatorEngine::compute_adx(const QVector<double>& high, const 
     r.current[QStringLiteral("plus_di")] = pdi_curr;
     r.current[QStringLiteral("minus_di")] = mdi_curr;
     r.previous[QStringLiteral("value")] = prev_adx;
-    r.previous[QStringLiteral("plus_di")] = pdi_curr;
-    r.previous[QStringLiteral("minus_di")] = mdi_curr;
+    r.previous[QStringLiteral("plus_di")] =
+        atr_prev_smooth > 1e-10 ? plus_prev_smooth / atr_prev_smooth * 100.0 : 0;
+    r.previous[QStringLiteral("minus_di")] =
+        atr_prev_smooth > 1e-10 ? minus_prev_smooth / atr_prev_smooth * 100.0 : 0;
     return r;
 }
 
@@ -609,15 +618,19 @@ IndicatorResult IndicatorEngine::compute_supertrend(const QVector<double>& high,
         lower[i] = hl2 - multiplier * atr_ema[i];
     }
 
+    // Initialize the first valid output for callers that request period+1 bars.
+    st[start] = lower[start];
     for (int i = start + 1; i < n; ++i) {
-        if (close[i - 1] > upper[i - 1])
+        // Each final band ratchets against itself, not the opposite band.
+        if (close[i - 1] > lower[i - 1])
             lower[i] = std::max(lower[i], lower[i - 1]);
-        if (close[i - 1] < lower[i - 1])
+        if (close[i - 1] < upper[i - 1])
             upper[i] = std::min(upper[i], upper[i - 1]);
 
-        if (close[i] > upper[i])
+        // A reversal is tested against previous final bands.
+        if (close[i] > upper[i - 1])
             dir[i] = 1;
-        else if (close[i] < lower[i])
+        else if (close[i] < lower[i - 1])
             dir[i] = -1;
         else
             dir[i] = dir[i - 1];

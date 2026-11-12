@@ -37,8 +37,7 @@ account access, PIN clearing, or GitHub Actions enablement is required.
 
 ## Current evidence
 
-- Source-contract tests are local/offline regression checks, not C++ runtime
-  tests; record their exact SHA and result separately when executed.
+- **3/3 Python source-contract tests PASS on iMac (2026-11-12)** using an isolated file tree populated from the GitHub branch; no install. Git blob hashes checked for CMake (`c22c6354e8fa8664c0935a49099f1f265c72be52`), source test (`a82a4366c4474aeae78dcd7fce6f512dc214cb3b`) and original Qt smoke C++ (`8eaa31502b00aea5fc7585ecdc2c09eb4a56e06f`). These are **not C++ runtime tests**.
 - Original Fincept DRAFT #39 separately has **7/7 source tests PASS** at exact
   `7c2e29d2` on iMac.
 - As of creation: **native QtCore build NOT RUN** because no authorized

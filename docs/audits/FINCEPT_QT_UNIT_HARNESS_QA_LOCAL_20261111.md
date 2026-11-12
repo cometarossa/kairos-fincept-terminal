@@ -27,8 +27,9 @@ not a GUI test.** No original Fincept file is modified. Synthetic data only.
 | `tst_indicator_engine_reference` (new) | 44 passed |
 | `tst_order_validator` (upstream) | **does not compile** — see below |
 
-The C++ engine agrees with the exact reference on 36 of 40 values (the other
-four are the ADX and Supertrend defects below): SMA, EMA, WMA,
+The C++ engine agrees with the exact reference on 37 of the 40 rows, current
+and previous bar (ADX +DI/−DI agree on the current bar only, Supertrend not at
+all — see the defects below): SMA, EMA, WMA,
 DEMA, TEMA, RSI, MACD (line, signal, histogram), Stochastic (%K, %D), CCI,
 Williams %R, MFI, ROC, Aroon (up, down), ATR, Bollinger (upper, middle, lower,
 width, %B), Keltner (upper, middle, lower), Donchian (upper, lower), OBV, CMF,

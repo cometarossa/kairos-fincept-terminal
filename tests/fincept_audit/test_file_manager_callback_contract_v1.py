@@ -41,7 +41,7 @@ def preserved(text):
     # Mask comments and literals in one lexical pass: // inside a quoted
     # URL or raw string is not a C++ comment and must not erase live code.
     lexical = re.compile(
-        r"""R"(?P<delimiter>[A-Za-z0-9_]*)\(.*?\)(?P=delimiter)"|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|/\*.*?\*/|//[^\n]*""",
+        r"""R"(?P<delimiter>[-A-Za-z0-9_]*)\(.*?\)(?P=delimiter)"|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|/\*.*?\*/|//[^\n]*""",
         flags=re.DOTALL,
     )
     def mask_non_code(match):
@@ -118,6 +118,7 @@ class FileManagerSourceContractTests(unittest.TestCase):
         for literal in (
             'R"(dock_router_->navigate(route_id);)"',
             'R"sentinel(dock_router_->navigate(route_id);)sentinel"',
+            'R"tag-x(quoted " marker dock_router_->navigate(route_id);)tag-x"',
         ):
             with self.subTest(literal=literal):
                 altered = original.replace(token, "auto inert = " + literal + ";", 1)

@@ -28,7 +28,7 @@ endif()
 # test file reuses it. Keep the same pin unless the caller overrides it knowingly.
 set(FINCEPT_HARNESS_QT_VERSION "6.8.3" CACHE STRING "Qt version to require (EXACT)")
 set(_FINCEPT_QT_VER_ARGS ${FINCEPT_HARNESS_QT_VERSION} EXACT)
-find_package(Qt6 ${_FINCEPT_QT_VER_ARGS} REQUIRED COMPONENTS Core Test)
+find_package(Qt6 ${_FINCEPT_QT_VER_ARGS} REQUIRED COMPONENTS Core Test Gui)
 
 enable_testing()
 # The upstream file resolves sources and includes from PROJECT_SOURCE_DIR.
@@ -46,3 +46,11 @@ fincept_add_test(tst_indicator_temporal_contracts
     "${CMAKE_CURRENT_SOURCE_DIR}/tst_indicator_temporal_contracts.cpp"
     "${FINCEPT_QT_DIR}/src/algo_engine/IndicatorEngine.cpp")
 set_tests_properties(tst_indicator_temporal_contracts PROPERTIES TIMEOUT 30)
+
+# End-to-end, broker-free ConditionEvaluator/IndicatorEngine crossing behavior.
+fincept_add_test(tst_indicator_consumer_fix
+    "${CMAKE_CURRENT_SOURCE_DIR}/tst_indicator_consumer_fix.cpp"
+    "${FINCEPT_QT_DIR}/src/algo_engine/ConditionEvaluator.cpp"
+    "${FINCEPT_QT_DIR}/src/algo_engine/IndicatorEngine.cpp")
+target_link_libraries(tst_indicator_consumer_fix PRIVATE Qt6::Gui)
+set_tests_properties(tst_indicator_consumer_fix PROPERTIES TIMEOUT 30)

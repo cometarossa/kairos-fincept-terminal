@@ -1,6 +1,5 @@
-// Original C++ engine property probes. No original Fincept sources changed.
-// QEXPECT_FAIL documents a known engine defect: XPASS will require reviewing
-// and retiring the sentinel if a future fix changes the numerical behaviour.
+// Strict C++ as-of temporal regression tests for proposed fix only.
+// No XFAIL masking: all ADX/Supertrend properties must hold.
 #include "algo_engine/IndicatorEngine.h"
 
 #include <QJsonObject>
@@ -15,6 +14,35 @@ using fincept::algo::IndicatorResult;
 using fincept::algo::OhlcvCandle;
 
 namespace {
+
+struct ReversalExpected {
+    int bars;
+    double current;
+    double previous;
+    int direction;
+    int previous_direction;
+};
+
+// BEGIN GENERATED SUPERTREND REVERSAL ORACLE
+static const ReversalExpected kReversals[] = {
+    {11, 97.407363636363641, 96.918999999999997, 1, 1},
+    {12, 97.864206611570253, 97.407363636363641, 1, 1},
+    {20, 102.14150618797838, 101.68406311864024, 1, 1},
+    {35, 110.11260823337419, 109.62096561856845, 1, 1},
+    {42, 110.11260823337419, 110.11260823337419, 1, 1},
+    {55, 107.07892201949079, 108.11479357937763, -1, -1},
+    {75, 87.244538775169346, 88.307769614095861, -1, -1},
+    {85, 82.499392640399634, 81.092035449377335, 1, 1},
+    {100, 100.53765006111395, 99.115461185805941, 1, 1},
+    {115, 118.56107580344037, 117.10520375976044, 1, 1},
+    {125, 124.80919540475469, 125.92234993914462, -1, -1},
+    {150, 99.004796240255246, 99.969195404756405, -1, -1},
+    {155, 93.837512236439593, 94.899181622315055, -1, -1},
+    {165, 93.837512236439593, 93.837512236439593, -1, -1},
+    {180, 97.692035442913067, 96.912487763560407, 1, 1},
+    {200, 114.16906202098615, 113.46107580342752, 1, 1},
+};
+// END GENERATED SUPERTREND REVERSAL ORACLE
 
 QVector<OhlcvCandle> synthetic_candles() {
     QVector<OhlcvCandle> out;
@@ -39,6 +67,37 @@ QVector<OhlcvCandle> synthetic_candles() {
     return out;
 }
 
+QVector<OhlcvCandle> reversal_candles() {
+    QVector<OhlcvCandle> out;
+    out.reserve(200);
+    int close = 10000;
+    for (int i = 0; i < 200; ++i) {
+        int delta = 0;
+        if (i < 35)
+            delta = 48 + 5 * (i % 3);
+        else if (i < 75)
+            delta = -(85 + 7 * (i % 5));
+        else if (i < 115)
+            delta = 110 + 5 * (i % 5);
+        else if (i < 155)
+            delta = -(90 + 9 * (i % 4));
+        else
+            delta = 75 + 3 * (i % 6);
+        close += delta;
+        OhlcvCandle c;
+        c.open_time = i;
+        c.close_time = i;
+        c.open = (close - 15 + (i % 5) * 5) / 100.0;
+        c.high = (close + 125 + (i % 4) * 7) / 100.0;
+        c.low = (close - 135 - (i % 3) * 9) / 100.0;
+        c.close = close / 100.0;
+        c.volume = 1000 + i;
+        c.is_closed = true;
+        out.append(c);
+    }
+    return out;
+}
+
 bool near(double a, double b) {
     return std::isfinite(a) && std::isfinite(b)
         && std::abs(a - b) <= 1e-9 * std::max({1.0, std::abs(a), std::abs(b)});
@@ -57,6 +116,7 @@ class TstIndicatorTemporalContracts : public QObject {
   private slots:
     void adx_previous_di_is_the_prior_prefix_value();
     void supertrend_long_line_does_not_decrease_without_reversal();
+    void supertrend_reversals_match_independent_fraction_oracle();
 };
 
 void TstIndicatorTemporalContracts::adx_previous_di_is_the_prior_prefix_value() {
@@ -89,8 +149,7 @@ void TstIndicatorTemporalContracts::adx_previous_di_is_the_prior_prefix_value() 
           compared, broken_previous, actual_crossovers, masked_crossovers);
     QVERIFY(compared > 100);
     QVERIFY(actual_crossovers > 0);
-    QVERIFY(masked_crossovers > 0); // Characterization of current defect.
-    QEXPECT_FAIL("", "KNOWN BUG: original ADX previous DI repeats current rather than last bar; expected failure until corrected", Continue);
+    QCOMPARE(masked_crossovers, 0);
     QCOMPARE(broken_previous, 0);
 }
 
@@ -115,8 +174,38 @@ void TstIndicatorTemporalContracts::supertrend_long_line_does_not_decrease_witho
     qInfo("Supertrend: same-direction long transitions=%d decreases=%d",
           eligible_long_bars, long_line_falls);
     QVERIFY(eligible_long_bars > 20);
-    QEXPECT_FAIL("", "KNOWN BUG: long Supertrend trailing line can decrease in the unmodified engine", Continue);
     QCOMPARE(long_line_falls, 0);
+}
+
+void TstIndicatorTemporalContracts::supertrend_reversals_match_independent_fraction_oracle() {
+    const auto candles = reversal_candles();
+    QCOMPARE(candles.size(), 200);
+    const QJsonObject params{{"period", 10}, {"multiplier", 3.0}};
+    for (const ReversalExpected& want : kReversals) {
+        const IndicatorResult actual =
+            IndicatorEngine::compute("SUPERTREND", candles.mid(0, want.bars), params, "value");
+        QVERIFY2(actual.valid, qPrintable(actual.error));
+        QVERIFY2(near(actual.current.value("value"), want.current), "reversal reference current line differs");
+        QVERIFY2(near(actual.previous.value("value"), want.previous), "reversal reference previous line differs");
+        QCOMPARE(static_cast<int>(actual.current.value("direction")), want.direction);
+        QCOMPARE(static_cast<int>(actual.previous.value("direction")), want.previous_direction);
+    }
+    int reversals = 0;
+    for (int bars = 12; bars <= candles.size(); ++bars) {
+        const IndicatorResult current =
+            IndicatorEngine::compute("SUPERTREND", candles.mid(0, bars), params, "value");
+        const IndicatorResult prior =
+            IndicatorEngine::compute("SUPERTREND", candles.mid(0, bars - 1), params, "value");
+        QVERIFY2(current.valid && prior.valid, "reversal fixture unexpectedly invalid");
+        QVERIFY2(near(current.previous.value("value"), prior.current.value("value")),
+                 "Supertrend previous line not equal to prior prefix current line");
+        const int direction = static_cast<int>(current.current.value("direction"));
+        const int prior_direction = static_cast<int>(prior.current.value("direction"));
+        QCOMPARE(static_cast<int>(current.previous.value("direction")), prior_direction);
+        if (direction != prior_direction)
+            ++reversals;
+    }
+    QCOMPARE(reversals, 4);
 }
 
 QTEST_GUILESS_MAIN(TstIndicatorTemporalContracts)

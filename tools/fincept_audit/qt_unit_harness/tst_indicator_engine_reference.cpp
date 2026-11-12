@@ -34,9 +34,7 @@ struct Expected {
     const char* key;
     double current;
     double previous;
-    // "match": current and previous equal the reference.
-    // "current_only": current matches; previous is a known engine defect and must differ.
-    // "diverges": current is a known engine defect and must differ from the reference.
+    // Every row must match for both current and previous, with no defect exemptions.
     const char* check;
 };
 
@@ -80,9 +78,9 @@ static const Expected kExpected[] = {
     {"ICHIMOKU", "{\"kijun\":26,\"senkou\":52,\"tenkan\":9}", "senkou_a", 109.8275, 109.8275, "match"},
     {"ICHIMOKU", "{\"kijun\":26,\"senkou\":52,\"tenkan\":9}", "senkou_b", 108.23, 108.23, "match"},
     {"ADX", "{\"period\":14}", "value", 5.7620079231256724, 5.873131548885379, "match"},
-    {"ADX", "{\"period\":14}", "plus_di", 42.73921431551146, 45.52709513640209, "current_only"},
-    {"ADX", "{\"period\":14}", "minus_di", 39.20150505165606, 36.20055804048849, "current_only"},
-    {"SUPERTREND", "{\"multiplier\":3.0,\"period\":10}", "value", 105.83737074349634, 105.83737074349634, "diverges"},
+    {"ADX", "{\"period\":14}", "plus_di", 42.73921431551146, 45.52709513640209, "match"},
+    {"ADX", "{\"period\":14}", "minus_di", 39.20150505165606, 36.20055804048849, "match"},
+    {"SUPERTREND", "{\"multiplier\":3.0,\"period\":10}", "value", 105.83737074349634, 105.83737074349634, "match"},
 };
 // END GENERATED REFERENCE
 
@@ -171,7 +169,7 @@ void TstIndicatorEngineReference::every_indicator_matches_the_exact_reference() 
     QFETCH(double, current);
     QFETCH(double, previous);
     QFETCH(QString, check);
-    QVERIFY(check == "match" || check == "current_only" || check == "diverges");
+    QVERIFY(check == "match");
 
     const QJsonObject params = QJsonDocument::fromJson(params_json.toUtf8()).object();
     const IndicatorResult r = IndicatorEngine::compute(indicator, fixture(), params, key);
@@ -184,19 +182,8 @@ void TstIndicatorEngineReference::every_indicator_matches_the_exact_reference() 
     const QString detail = QStringLiteral("current: engine %1, reference %2; previous: engine %3, reference %4")
                                .arg(got_current, 0, 'g', 17).arg(current, 0, 'g', 17)
                                .arg(got_previous, 0, 'g', 17).arg(previous, 0, 'g', 17);
-    if (check == "diverges") {
-        // Known defect pinned by the reference. If this starts matching, the engine
-        // was fixed: move the row back to "match" in indicator_reference_v1.py.
-        QVERIFY2(std::isfinite(got_current) && !close_enough(got_current, current), qPrintable(detail));
-        return;
-    }
+    // Fix candidate: no numeric discrepancies are accepted for either bar.
     QVERIFY2(close_enough(got_current, current), qPrintable(detail));
-    if (check == "current_only") {
-        // Known defect: previous repeats the current value instead of the prior bar's.
-        QVERIFY2(!close_enough(got_previous, previous), qPrintable(detail));
-        QCOMPARE(got_previous, got_current);
-        return;
-    }
     QVERIFY2(close_enough(got_previous, previous), qPrintable(detail));
 }
 

@@ -28,11 +28,9 @@ band only rises while the previous close stayed above the previous final lower
 band (the upper band mirrors it), and the direction flips when the close crosses
 the previous final band. ATR here is the EMA of the true range, as in the engine.
 
-`CHECKS` says how the C++ test treats each row: "match" (current and previous
-must equal the reference), "current_only" (previous is a known engine defect
-and must differ) or "diverges" (current is a known engine defect and must
-differ). The last two pin defects found by this reference; when the engine is
-fixed those rows fail and must be moved back to "match".
+The fix candidate uses strict reference checks: CHECKS is empty and every
+current and previous value must equal the exact mathematical reference.
+
 
 Synthetic integers, not market data. A match says the C++ arithmetic follows
 these definitions on this fixture; it says nothing about any strategy.
@@ -312,12 +310,8 @@ def reference(bars: int = BARS):
     return out
 
 
-# Rows that pin a known engine defect (see module docstring).
-CHECKS = {
-    ("ADX", "plus_di"): "current_only",    # previous reports the current value
-    ("ADX", "minus_di"): "current_only",   # previous reports the current value
-    ("SUPERTREND", "value"): "diverges",   # final lower band ratchets on the wrong band
-}
+# Strict candidate: all 40 current and previous reference values must match.
+CHECKS = {}
 
 
 def cpp_table(bars: int = BARS) -> str:

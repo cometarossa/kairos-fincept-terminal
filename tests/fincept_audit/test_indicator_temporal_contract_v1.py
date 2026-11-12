@@ -1,6 +1,6 @@
-"""Narrow source checks for the original C++ temporal defect probe.
+"""Exact-head source contracts for the strict C++ fix candidate.
 
-Native Qt executions are documented separately. These do not certify a fixed engine.
+These are structural checks only, not a release or trading permission.
 """
 from pathlib import Path
 import hashlib
@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PROBE = ROOT / "tools/fincept_audit/qt_unit_harness/tst_indicator_temporal_contracts.cpp"
 CMAKE = ROOT / "tools/fincept_audit/qt_unit_harness/CMakeLists.txt"
 ENGINE = ROOT / "fincept-qt/src/algo_engine/IndicatorEngine.cpp"
-EXPECTED_ENGINE_BLOB = "cf454fff4dc204a45248bc285f72fd38745e68b7"
+EXPECTED_ENGINE_BLOB = "7d3c32ca4d9f4a265a77dbbe56d59b52129ecfb5"
 
 
 def git_blob(path: Path) -> str:
@@ -19,7 +19,7 @@ def git_blob(path: Path) -> str:
 
 
 class TemporalContractsSourceTests(unittest.TestCase):
-    def test_original_engine_is_unmodified(self):
+    def test_engine_fix_candidate_blob_is_pinned(self):
         self.assertEqual(git_blob(ENGINE), EXPECTED_ENGINE_BLOB)
 
     def test_real_engine_is_linked_into_registered_ctest(self):
@@ -42,7 +42,7 @@ class TemporalContractsSourceTests(unittest.TestCase):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, cpp)
 
-    def test_asof_prefix_invariants_are_expected_to_fail_and_broker_free(self):
+    def test_asof_prefix_invariants_are_strict_and_broker_free(self):
         cpp = PROBE.read_text(encoding="utf-8")
         for fragment in (
             "candles.mid(0, n)",
@@ -52,12 +52,14 @@ class TemporalContractsSourceTests(unittest.TestCase):
             'prior.current.value("plus_di")',
             "masked_crossovers",
             "long_line_falls",
-            "QEXPECT_FAIL",
+            "QCOMPARE(broken_previous, 0)",
+            "QCOMPARE(masked_crossovers, 0)",
+            "QCOMPARE(long_line_falls, 0)",
             "QTEST_GUILESS_MAIN",
         ):
             with self.subTest(fragment=fragment):
                 self.assertIn(fragment, cpp)
-        self.assertEqual(cpp.count("QEXPECT_FAIL("), 2)
+        self.assertNotIn("QEXPECT_FAIL(", cpp)
         for forbidden in (
             "ExecuteMarketOrder", "QNetworkAccessManager", "QWebEngine",
             "IG_DEMO", "IG_LIVE", "OrderValidator", "QApplication",

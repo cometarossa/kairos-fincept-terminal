@@ -41,7 +41,7 @@ def preserved(text):
     # Mask comments and literals in one lexical pass: // inside a quoted
     # URL or raw string is not a C++ comment and must not erase live code.
     lexical = re.compile(
-        r'R"(?P<delimiter>[A-Za-z0-9_]*)\(.*?\)(?P=delimiter)"|"(?:\\.|[^"\\])*"|/\*.*?\*/|//[^\n]*',
+        r"""R"(?P<delimiter>[A-Za-z0-9_]*)\(.*?\)(?P=delimiter)"|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|/\*.*?\*/|//[^\n]*""",
         flags=re.DOTALL,
     )
     def mask_non_code(match):
@@ -150,6 +150,16 @@ class FileManagerSourceContractTests(unittest.TestCase):
         ):
             with self.subTest(prefix=prefix):
                 altered = original.replace(token, prefix + token, 1)
+                self.assertTrue(preserved(altered))
+
+    def test_comment_markers_inside_character_literals_preserve_navigation(self):
+        original = SOURCE.read_text(encoding="utf-8-sig")
+        self.assertTrue(preserved(original))
+        token = "dock_router_->navigate(route_id);"
+        for prefix in ("auto marker = '//'; ", "auto marker = '/*'; "):
+            with self.subTest(prefix=prefix):
+                altered = original.replace(token, prefix + token, 1)
+                self.assertNotEqual(altered, original)
                 self.assertTrue(preserved(altered))
 
     def test_opt_in_factory_allowed(self):

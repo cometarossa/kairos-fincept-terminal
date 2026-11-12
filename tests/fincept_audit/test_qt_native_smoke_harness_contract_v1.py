@@ -35,6 +35,18 @@ class NativeQtSmokeHarnessSourceContractTests(unittest.TestCase):
         for forbidden in ("ExecuteMarketOrder", "QApplication", "QWebEngine", "IGDemoCanonicalAdapter"):
             self.assertNotIn(forbidden, router + native)
 
+    def test_unconstructed_screen_is_a_bounded_failure(self):
+        cmake = (HARNESS / "CMakeLists.txt").read_text(encoding="utf-8")
+        source = (ROOT / "fincept-qt/src/app/ScreenSmokeTest.cpp").read_text(
+            encoding="utf-8-sig")
+        native = (HARNESS / "test_smoke_native.cpp").read_text(encoding="utf-8")
+        self.assertIn("kConstructDeadlineMs = 8000", source)
+        self.assertIn("set_tests_properties(fincept_smoke_native_contract", cmake)
+        self.assertIn("TIMEOUT 30", cmake)
+        self.assertIn("unbuilt.materialize_on_navigation = false", native)
+        self.assertIn("run_screen_smoke_test(&unbuilt) == 1", native)
+        self.assertIn("unbuilt.navigation_calls == 1", native)
+
     def test_runtime_assertions_cover_both_failure_and_success(self):
         source = (ROOT / "fincept-qt/src/app/ScreenSmokeTest.cpp").read_text(encoding="utf-8-sig")
         self.assertIn("if (ids.isEmpty())", source)

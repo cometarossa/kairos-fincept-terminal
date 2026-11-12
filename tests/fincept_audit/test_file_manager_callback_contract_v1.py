@@ -10,15 +10,15 @@ def strip_disabled_cpp(text):
     """Fail closed on unsupported inactive preprocessor branches (source-only)."""
     output, depth = [], 0
     for line in text.splitlines(keepends=True):
-        if re.match(r"^\\s*#\\s*if\\s+0\\s*(?://.*)?$", line.strip()):
+        if re.match(r"^\s*#\s*if\s+0\s*(?://.*)?$", line.strip()):
             depth += 1
             continue
         if depth:
-            if re.match(r"^\\s*#\\s*(if|ifdef|ifndef)\\b", line):
+            if re.match(r"^\s*#\s*(if|ifdef|ifndef)\b", line):
                 depth += 1
-            elif re.match(r"^\\s*#\\s*endif\\b", line):
+            elif re.match(r"^\s*#\s*endif\b", line):
                 depth -= 1
-            elif depth == 1 and re.match(r"^\\s*#\\s*(else|elif)\\b", line):
+            elif depth == 1 and re.match(r"^\s*#\s*(else|elif)\b", line):
                 raise ValueError("unsupported #if 0 alternate branch")
             continue
         output.append(line)
@@ -97,7 +97,7 @@ class FileManagerSourceContractTests(unittest.TestCase):
         self.assertTrue(preserved(original))
         altered = original.replace(
             "dock_router_->navigate(route_id);",
-            "#if 0\\n                    dock_router_->navigate(route_id);\\n                    #endif",
+            "#if 0\n                    dock_router_->navigate(route_id);\n                    #endif",
             1,
         )
         self.assertNotEqual(altered, original)

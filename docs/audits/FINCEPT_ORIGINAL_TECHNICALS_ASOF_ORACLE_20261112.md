@@ -39,3 +39,31 @@ python3 -B -m unittest discover -s tests/fincept_audit \
 ```
 
 **Boundaries:** no market prices (all OHLCV data synthetic); no retrospective alpha, protected holdout, real returns or prediction quality evaluated. This does **not** establish that Fincept's 24+ indicators, C++ IndicatorEngine, Backtesting, full GUI, bridge integration or trading execution work correctly. The four selected indicators also do not validate network feeds or corporate-action adjustments. No live/demo access, secrets, orders, cash movement, daemon restart, native app profile or runner modification. Fork GitHub Actions CI remains separately unverified; local PASS does not equal CI success. DRAFT only, independent review required before integration.
+
+## 2026-11-12 — edge-case characterization & opt-in research-only input guard
+
+The original `volatility_indicators.py` and `momentum_indicators.py` are **still byte-identical** to the fork `main` baseline. Additional tests now run the actual `ta==0.11.0` wrappers on synthetic flat, zero-volume, incomplete and short histories. The Python helper `tools/fincept_audit/technical_preflight_lab_v1.py` is an **independent, explicit opt-in laboratory prototype only**; neither Fincept production nor KAIROS uses it. It returns `{"admissible": false, "reason": "..."}` for insufficient/invalid inputs, does not issue any trading decisions or depend on a network, and inspects no rows after a specified as-of bar.
+
+### Original observed semantics — *not* a trading PASS
+
+| Synthetic case | Observed original result | Research-only guard |
+|---|---|---|
+| 5 or 13 candles, ATR(14) | `IndexError` (no graceful insufficient-history result) | `INSUFFICIENT_HISTORY` |
+| 50 identical OHLC prices | ATR = 0, upper Bollinger = 100, RSI(14) = 100, Stochastic %K = `NaN` | `DEGENERATE_RANGE` |
+| Flat close, positive intrabar high/low range | RSI(14) remains 100 even with no price movement | `NO_PRICE_MOVEMENT` |
+| Valid moving prices, all volume zero | PVO = `NaN` | `NO_VOLUME` if volume required |
+| One missing close at bar 30 of 61 | Bollinger upper stays `NaN` through bar 49; RSI at bar 31 can still be finite | `NON_FINITE_PRICE` while bad row is in requested window |
+| Invalid OHLC, duplicated timestamp, infinite prices or negative volume | Upstream wrapper behavior varies; not interpreted as valid data | `INVALID_CANDLE`, `NON_MONOTONIC_INDEX`, `NON_FINITE_PRICE`, `INVALID_VOLUME` |
+| Malformed request, `None` / list input | Treated as invalid, not trusted | `INVALID_REQUEST` or `INVALID_INPUT` |
+
+Some behaviors originate in upstream `ta` conventions (not necessarily Fincept-specific bugs). **A finite indicator is not sufficient evidence of valid underlying candles.** In particular, RSI = 100 on a flat close is *not* a bullish signal. The prototype rejects these inputs only if an authorized research consumer explicitly calls it; **it is not installed or enabled inside any signal/trading pipeline**.
+
+### Verifications
+
+- **Combined local Python tests: 15/15 PASS** with `python3 -B -m pytest -q tests/fincept_audit/test_original_technical_indicators_v1.py tests/fincept_audit/test_original_technical_edges_v1.py` on the same isolated iMac environment above: 7 original numeric/source tests + 8 new edge/preflight tests.
+- **Negative mutation (test of the guard):** change only the disposable helper's `NON_FINITE_PRICE` return to an unsafe `{"admissible": true, "reason": "OK"}`. The missing-close test **failed as expected** (`'OK' != 'NON_FINITE_PRICE'`); copied workspace deleted afterwards. Separate earlier Bollinger source mutation also produced its expected numeric FAIL.
+- The laboratory helper deliberately checks required OHLC input quality, price movement, an as-of index, optional volume, and chronological uniqueness, but it **does not itself establish sufficient indicator-specific warmup, validity of outputs, missingness outside the chosen window, exchange calendar, survivorship, causal features, alpha, risk approval, or execution rights**. A later integration would need additional tests and review.
+
+### Remaining gate
+
+No merge or enablement based on these tests. Audit indicator outputs and all required indicator-specific lookback windows separately, then review how (or whether) KAIROS research consumers might call a guard. Pin exact Git blobs and record branch-head tests; fork Actions CI still unverified.

@@ -9,7 +9,7 @@ not a GUI test.** No original Fincept file is modified. Synthetic data only.
   Test suites by including `fincept-qt/tests/CMakeLists.txt` **unmodified**. The
   full application configure needs seven Qt modules and several FetchContent
   downloads; these suites need only `Qt6::Core` and `Qt6::Test`.
-- `tools/fincept_audit/indicator_reference_v1.py` computes 22 indicators (36
+- `tools/fincept_audit/indicator_reference_v1.py` computes 24 indicators (40
   values, current and previous bar) from their textbook definitions with exact
   `Fraction` arithmetic on a 120-bar integer fixture.
 - `tools/fincept_audit/qt_unit_harness/tst_indicator_engine_reference.cpp` is a
@@ -24,10 +24,11 @@ not a GUI test.** No original Fincept file is modified. Synthetic data only.
 | `tst_result` (upstream) | 16 passed |
 | `tst_broker_modify_fields` (upstream) | 15 passed |
 | `tst_indicator_engine` (upstream) | 8 passed |
-| `tst_indicator_engine_reference` (new) | 40 passed |
+| `tst_indicator_engine_reference` (new) | 44 passed |
 | `tst_order_validator` (upstream) | **does not compile** — see below |
 
-The C++ engine agrees with the exact reference on all 36 values: SMA, EMA, WMA,
+The C++ engine agrees with the exact reference on 36 of 40 values (the other
+four are the ADX and Supertrend defects below): SMA, EMA, WMA,
 DEMA, TEMA, RSI, MACD (line, signal, histogram), Stochastic (%K, %D), CCI,
 Williams %R, MFI, ROC, Aroon (up, down), ATR, Bollinger (upper, middle, lower,
 width, %B), Keltner (upper, middle, lower), Donchian (upper, lower), OBV, CMF,
@@ -40,8 +41,27 @@ window; RSI and ATR with Wilder smoothing; Bollinger with the population
 deviation; Keltner bands from an EMA of the true range (not the Wilder ATR the
 standalone ATR indicator uses); VWAP cumulative over the supplied window.
 
-Not covered: ADX and Supertrend, edge cases (flat ranges, zero volume, short
-history), and everything outside `IndicatorEngine`.
+ADX's value matches the reference exactly. Two defects were found and are
+**pinned, not fixed**, in the reference suite (rows marked `current_only` /
+`diverges`, which fail once the engine is fixed):
+
+- **ADX `previous.plus_di` / `previous.minus_di` repeat the current bar's value.**
+  `compute_adx` writes `pdi_curr`/`mdi_curr` into both `current` and `previous`.
+  Any condition that reads the prior +DI/−DI (for example a DI crossover) sees no
+  change and can never fire.
+- **Supertrend ratchets the wrong band.** The engine lets the final lower band
+  rise only when the previous close was above the *upper* band (and the upper band
+  fall only when it was below the *lower* band). The textbook rule compares with
+  the band itself. On the fixture the long-side line falls on 66 of 110 bars,
+  where by definition it never may; the current value is 104.71 against 105.84.
+  The direction also flips on the current bands instead of the previous ones.
+
+A separate draft PR proposes the fix. Because `IndicatorEngine` feeds the
+algo-trading condition evaluator, fixing it changes signals of any strategy that
+uses these two indicators; that is an owner decision.
+
+Not covered: edge cases (flat ranges, zero volume, short history), and everything
+outside `IndicatorEngine`.
 
 ## Finding: upstream `tst_order_validator` cannot be built as declared
 
@@ -68,5 +88,5 @@ cmake -S tools/fincept_audit/qt_unit_harness -B <build> -G Ninja \
 cmake --build <build> --target tst_result tst_broker_modify_fields \
       tst_indicator_engine tst_indicator_engine_reference
 QT_QPA_PLATFORM=offscreen ctest --test-dir <build> -E tst_order_validator --output-on-failure
-python -m pytest -q tests/fincept_audit/test_indicator_reference_v1.py   # 6 passed, stdlib only
+python -m pytest -q tests/fincept_audit/test_indicator_reference_v1.py   # 8 passed, stdlib only
 ```

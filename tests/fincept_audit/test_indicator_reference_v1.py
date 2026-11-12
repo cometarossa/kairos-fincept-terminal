@@ -52,19 +52,47 @@ class ReferenceTableTests(unittest.TestCase):
         self.assertEqual(table[("ICHIMOKU", "senkou_a")][0],
                          (table[("ICHIMOKU", "tenkan_sen")][0] + table[("ICHIMOKU", "kijun_sen")][0]) / 2)
 
-    def test_reference_covers_22_indicators_and_36_values_within_bounds(self):
+    def test_reference_covers_24_indicators_and_40_values_within_bounds(self):
         rows = ref.reference()
-        self.assertEqual(len(rows), 36)
-        self.assertEqual(len({r[0] for r in rows}), 22)
-        self.assertEqual(len({(r[0], r[2]) for r in rows}), 36)
+        self.assertEqual(len(rows), 40)
+        self.assertEqual(len({r[0] for r in rows}), 24)
+        self.assertEqual(len({(r[0], r[2]) for r in rows}), 40)
         bounded = {("RSI", "value"): (0, 100), ("STOCHASTIC", "k"): (0, 100), ("STOCHASTIC", "d"): (0, 100),
                    ("MFI", "value"): (0, 100), ("WILLIAMS_R", "value"): (-100, 0),
-                   ("AROON", "up"): (0, 100), ("AROON", "down"): (0, 100), ("CMF", "value"): (-1, 1)}
+                   ("AROON", "up"): (0, 100), ("AROON", "down"): (0, 100), ("CMF", "value"): (-1, 1),
+                   ("ADX", "value"): (0, 100), ("ADX", "plus_di"): (0, 100), ("ADX", "minus_di"): (0, 100)}
         for name, _, key, current, previous in rows:
             self.assertIsInstance(current, F)
             if (name, key) in bounded:
                 low, high = bounded[(name, key)]
                 self.assertTrue(low <= current <= high and low <= previous <= high, (name, key))
+
+    def test_known_engine_defects_are_the_only_non_match_rows(self):
+        self.assertEqual(ref.CHECKS, {("ADX", "plus_di"): "current_only",
+                                      ("ADX", "minus_di"): "current_only",
+                                      ("SUPERTREND", "value"): "diverges"})
+        keys = {(r[0], r[2]) for r in ref.reference()}
+        self.assertTrue(set(ref.CHECKS) <= keys)
+        table = ref.cpp_table()
+        self.assertEqual(table.count('"match"},'), 37)
+
+    def test_textbook_supertrend_lower_band_never_falls_while_long(self):
+        # The defining property the engine violates: in an uptrend the line is the
+        # final lower band, which may only rise. Recompute on the fixture.
+        rows = ref.fixture()
+        high = [F(r[1], 100) for r in rows]
+        low = [F(r[2], 100) for r in rows]
+        close = [F(r[3], 100) for r in rows]
+        atr = ref._ema(ref._true_range(high, low, close), 10)
+        final_low = None
+        lows = []
+        for i in range(9, len(close)):
+            basic = (high[i] + low[i]) / 2 - 3 * atr[i]
+            final_low = basic if final_low is None or close[i - 1] <= final_low else max(basic, final_low)
+            lows.append(final_low)
+        self.assertTrue(all(b >= a for a, b in zip(lows, lows[1:])))
+        line = {(r[0], r[2]): r[3] for r in ref.reference()}[("SUPERTREND", "value")]
+        self.assertEqual(line, lows[-1])
 
     def test_ema_seed_and_wilder_average_on_a_tiny_hand_case(self):
         # EMA(3) of 1,2,3,4,5: seed (1+2+3)/3 = 2, k = 1/2 -> 3, then 4.

@@ -18,8 +18,21 @@ Definitions used (period in parentheses is what the test asks for):
   CCI(20, constant 0.015), Williams %R(14), MFI(14), ROC(10), Aroon(14),
   ATR(14, Wilder, first value the mean of TR[1..n]), Bollinger(20, 2,
   population deviation), Keltner(20, 1.5, EMA of true range), Donchian(20),
-  OBV, CMF(20), cumulative VWAP, windowed volume change(10), Ichimoku(9, 26, 52).
+  OBV, CMF(20), cumulative VWAP, windowed volume change(10), Ichimoku(9, 26, 52),
+  ADX(14, Wilder: DI from Wilder-smoothed TR/DM, ADX the Wilder average of DX
+  seeded with the mean of the first n DX values), Supertrend(10, 3).
 `previous` is the same indicator one bar earlier.
+
+Supertrend uses the textbook bands: basic = (H+L)/2 +/- k*ATR, the final lower
+band only rises while the previous close stayed above the previous final lower
+band (the upper band mirrors it), and the direction flips when the close crosses
+the previous final band. ATR here is the EMA of the true range, as in the engine.
+
+`CHECKS` says how the C++ test treats each row: "match" (current and previous
+must equal the reference), "current_only" (previous is a known engine defect
+and must differ) or "diverges" (current is a known engine defect and must
+differ). The last two pin defects found by this reference; when the engine is
+fixed those rows fail and must be moved back to "match".
 
 Synthetic integers, not market data. A match says the C++ arithmetic follows
 these definitions on this fixture; it says nothing about any strategy.
@@ -243,9 +256,68 @@ def reference(bars: int = BARS):
         [None if tenkan[i] is None else (tenkan[i] + kijun[i]) / 2 for i in range(n)])
     add("ICHIMOKU", ichi_params, "senkou_b", [None] * 51 + [midpoint(i, 52) for i in range(51, n)])
 
+    # ADX(14), Wilder.
+    period = 14
+    plus_dm, minus_dm = [Fraction(0)] * n, [Fraction(0)] * n
+    for i in range(1, n):
+        up, down = h[i] - h[i - 1], low[i - 1] - low[i]
+        if up > down and up > 0:
+            plus_dm[i] = up
+        if down > up and down > 0:
+            minus_dm[i] = down
+    s_tr = sum(tr[1:period + 1], Fraction(0))
+    s_plus = sum(plus_dm[1:period + 1], Fraction(0))
+    s_minus = sum(minus_dm[1:period + 1], Fraction(0))
+    plus_di, minus_di, dx = [None] * n, [None] * n, [None] * n
+    for i in range(period, n):
+        if i > period:
+            s_tr = s_tr - s_tr / period + tr[i]
+            s_plus = s_plus - s_plus / period + plus_dm[i]
+            s_minus = s_minus - s_minus / period + minus_dm[i]
+        plus_di[i], minus_di[i] = s_plus / s_tr * 100, s_minus / s_tr * 100
+        dx[i] = abs(plus_di[i] - minus_di[i]) / (plus_di[i] + minus_di[i]) * 100
+    adx = [None] * n
+    first = 2 * period - 1
+    adx[first] = sum(dx[period:first + 1], Fraction(0)) / period
+    for i in range(first + 1, n):
+        adx[i] = (adx[i - 1] * (period - 1) + dx[i]) / period
+    adx_params = {"period": 14}
+    add("ADX", adx_params, "value", adx)
+    add("ADX", adx_params, "plus_di", plus_di)
+    add("ADX", adx_params, "minus_di", minus_di)
+
+    # Supertrend(10, 3), textbook final bands on an EMA(10) of the true range.
+    st_atr = _ema(tr, 10)
+    st_start = 9
+    final_up, final_low, direction, line = [None] * n, [None] * n, [None] * n, [None] * n
+    for i in range(st_start, n):
+        mid = (h[i] + low[i]) / 2
+        basic_up, basic_low = mid + 3 * st_atr[i], mid - 3 * st_atr[i]
+        if i == st_start:
+            final_up[i], final_low[i], direction[i] = basic_up, basic_low, 1
+        else:
+            final_up[i] = min(basic_up, final_up[i - 1]) if c[i - 1] < final_up[i - 1] else basic_up
+            final_low[i] = max(basic_low, final_low[i - 1]) if c[i - 1] > final_low[i - 1] else basic_low
+            if c[i] > final_up[i - 1]:
+                direction[i] = 1
+            elif c[i] < final_low[i - 1]:
+                direction[i] = -1
+            else:
+                direction[i] = direction[i - 1]
+        line[i] = final_low[i] if direction[i] == 1 else final_up[i]
+    add("SUPERTREND", {"multiplier": 3.0, "period": 10}, "value", line)
+
     # `o` is part of the fixture contract even though no indicator here reads it.
     assert len(o) == n and all(value is not None for row in out for value in row[3:])
     return out
+
+
+# Rows that pin a known engine defect (see module docstring).
+CHECKS = {
+    ("ADX", "plus_di"): "current_only",    # previous reports the current value
+    ("ADX", "minus_di"): "current_only",   # previous reports the current value
+    ("SUPERTREND", "value"): "diverges",   # final lower band ratchets on the wrong band
+}
 
 
 def cpp_table(bars: int = BARS) -> str:
@@ -254,8 +326,9 @@ def cpp_table(bars: int = BARS) -> str:
              "static const Expected kExpected[] = {"]
     for name, params, key, current, previous in reference(bars):
         text = json.dumps(params, sort_keys=True, separators=(",", ":")).replace('"', '\\"')
-        lines.append('    {"%s", "%s", "%s", %s, %s},' % (
-            name, text, key, repr(float(current)), repr(float(previous))))
+        lines.append('    {"%s", "%s", "%s", %s, %s, "%s"},' % (
+            name, text, key, repr(float(current)), repr(float(previous)),
+            CHECKS.get((name, key), "match")))
     lines += ["};", END]
     return "\n".join(lines) + "\n"
 

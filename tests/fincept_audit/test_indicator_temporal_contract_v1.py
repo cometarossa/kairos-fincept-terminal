@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 PROBE = ROOT / "tools/fincept_audit/qt_unit_harness/tst_indicator_temporal_contracts.cpp"
 CMAKE = ROOT / "tools/fincept_audit/qt_unit_harness/CMakeLists.txt"
 ENGINE = ROOT / "fincept-qt/src/algo_engine/IndicatorEngine.cpp"
-EXPECTED_ENGINE_BLOB = "7d3c32ca4d9f4a265a77dbbe56d59b52129ecfb5"
+EXPECTED_ENGINE_BLOB = "e33cf1a6151012adb126ab05846b035d8efa16b0"
 
 
 def git_blob(path: Path) -> str:

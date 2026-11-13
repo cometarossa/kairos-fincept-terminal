@@ -54,3 +54,9 @@ fincept_add_test(tst_indicator_consumer_fix
     "${FINCEPT_QT_DIR}/src/algo_engine/IndicatorEngine.cpp")
 target_link_libraries(tst_indicator_consumer_fix PRIVATE Qt6::Gui)
 set_tests_properties(tst_indicator_consumer_fix PROPERTIES TIMEOUT 30)
+
+# Signal-affecting candidate input validation, compiled against production IndicatorEngine.cpp.
+fincept_add_test(tst_supertrend_input_guard
+    "${CMAKE_CURRENT_SOURCE_DIR}/tst_supertrend_input_guard.cpp"
+    "${FINCEPT_QT_DIR}/src/algo_engine/IndicatorEngine.cpp")
+set_tests_properties(tst_supertrend_input_guard PROPERTIES TIMEOUT 30)

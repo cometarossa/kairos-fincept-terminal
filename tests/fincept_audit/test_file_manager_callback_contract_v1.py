@@ -38,13 +38,20 @@ def preserved(text):
         body = strip_disabled_cpp(body)
     except ValueError:
         return False
-    # Comments cannot satisfy a source-preservation contract.
-    body = re.sub(r"/\*.*?\*/|//[^\n]*", "", body, flags=re.DOTALL)
+    # Mask comments and literals in one lexical pass: // inside a quoted
+    # URL or raw string is not a C++ comment and must not erase live code.
+    lexical = re.compile(
+        r"""R"(?P<delimiter>[-A-Za-z0-9_]*)\(.*?\)(?P=delimiter)"|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|/\*.*?\*/|//[^\n]*""",
+        flags=re.DOTALL,
+    )
+    def mask_non_code(match):
+        return "__CODE_EDITOR_LITERAL__" if match.group(0) == '"code_editor"' else " "
+    body = lexical.sub(mask_non_code, body)
     tokens = (
         "new screens::FileManagerScreen;",
         "connect(fm, &screens::FileManagerScreen::open_file_in_screen, this,",
         "dock_router_->navigate(route_id);",
-        'route_id == "code_editor" && !file_path.isEmpty()',
+        "route_id == __CODE_EDITOR_LITERAL__ && !file_path.isEmpty()",
         "dock_router_->materialize_now(route_id);",
         "nb->open_notebook_path(file_path);",
     )
@@ -102,6 +109,59 @@ class FileManagerSourceContractTests(unittest.TestCase):
         )
         self.assertNotEqual(altered, original)
         self.assertFalse(preserved(altered))
+
+    def test_raw_string_cannot_impersonate_navigation(self):
+        original = SOURCE.read_text(encoding="utf-8-sig")
+        self.assertTrue(preserved(original))
+        token = "dock_router_->navigate(route_id);"
+        self.assertIn(token, original)
+        for literal in (
+            'R"(dock_router_->navigate(route_id);)"',
+            'R"sentinel(dock_router_->navigate(route_id);)sentinel"',
+            'R"tag-x(quoted " marker dock_router_->navigate(route_id);)tag-x"',
+        ):
+            with self.subTest(literal=literal):
+                altered = original.replace(token, "auto inert = " + literal + ";", 1)
+                self.assertNotEqual(altered, original)
+                self.assertFalse(preserved(altered))
+
+    def test_ordinary_string_cannot_impersonate_navigation(self):
+        original = SOURCE.read_text(encoding="utf-8-sig")
+        self.assertTrue(preserved(original))
+        token = "dock_router_->navigate(route_id);"
+        self.assertIn(token, original)
+        for literal in (
+            '"dock_router_->navigate(route_id);"',
+            '"prefix \\" dock_router_->navigate(route_id); suffix"',
+        ):
+            with self.subTest(literal=literal):
+                altered = original.replace(token, "auto inert = " + literal + ";", 1)
+                self.assertNotEqual(altered, original)
+                self.assertFalse(preserved(altered))
+
+    def test_comment_markers_inside_literals_preserve_live_navigation(self):
+        original = SOURCE.read_text(encoding="utf-8-sig")
+        self.assertTrue(preserved(original))
+        token = "dock_router_->navigate(route_id);"
+        self.assertIn(token, original)
+        for prefix in (
+            'auto url = "https://example.invalid/path"; ',
+            'auto raw = R"tag(// not a comment)tag"; ',
+            'auto quoted = "/* not a comment */"; ',
+        ):
+            with self.subTest(prefix=prefix):
+                altered = original.replace(token, prefix + token, 1)
+                self.assertTrue(preserved(altered))
+
+    def test_comment_markers_inside_character_literals_preserve_navigation(self):
+        original = SOURCE.read_text(encoding="utf-8-sig")
+        self.assertTrue(preserved(original))
+        token = "dock_router_->navigate(route_id);"
+        for prefix in ("auto marker = '//'; ", "auto marker = '/*'; "):
+            with self.subTest(prefix=prefix):
+                altered = original.replace(token, prefix + token, 1)
+                self.assertNotEqual(altered, original)
+                self.assertTrue(preserved(altered))
 
     def test_opt_in_factory_allowed(self):
         original = SOURCE.read_text(encoding="utf-8-sig")

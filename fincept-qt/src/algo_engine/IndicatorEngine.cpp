@@ -165,7 +165,33 @@ IndicatorResult IndicatorEngine::compute(const QString& name, const QVector<Ohlc
     if (name == "ADX")
         return compute_adx(high, low, close, period);
     if (name == "SUPERTREND") {
-        double mult = params.value("multiplier").toDouble(3.0);
+        // A finite Supertrend output does NOT imply that its candle input was
+        // finite/consistent: an invalid close can silently preserve the trend
+        // while r.valid is true. Reject malformed inputs before signal math.
+        const auto raw_period = params.value("period");
+        if ((!raw_period.isUndefined() &&
+             (!raw_period.isDouble() || raw_period.toInt(-1) < 2)) ||
+            period < 2)
+            return make_error(QStringLiteral("Supertrend: invalid period (minimum 2)"));
+
+        const auto raw_multiplier = params.value("multiplier");
+        if (!raw_multiplier.isUndefined() && !raw_multiplier.isDouble())
+            return make_error(QStringLiteral("Supertrend: invalid multiplier type"));
+        const double mult = raw_multiplier.toDouble(3.0);
+        if (!std::isfinite(mult) || mult <= 0.0)
+            return make_error(QStringLiteral("Supertrend: multiplier must be finite and positive"));
+
+        for (const auto& candle : candles) {
+            if (!std::isfinite(candle.open) || !std::isfinite(candle.high) ||
+                !std::isfinite(candle.low) || !std::isfinite(candle.close))
+                return make_error(QStringLiteral("Supertrend: non-finite OHLC"));
+            if (candle.high < candle.low || candle.open > candle.high ||
+                candle.open < candle.low || candle.close > candle.high ||
+                candle.close < candle.low)
+                return make_error(QStringLiteral("Supertrend: inconsistent OHLC"));
+        }
+        // Volume/timestamps and exchange-calendar completeness are NOT
+        // checked by this price-only indicator; enforce those separately.
         return compute_supertrend(high, low, close, period, mult);
     }
     if (name == "AROON")

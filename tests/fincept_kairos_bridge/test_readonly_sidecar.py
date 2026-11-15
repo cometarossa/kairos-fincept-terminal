@@ -62,7 +62,7 @@ class ReadOnlyBridgeTests(unittest.TestCase):
 
     def test_policy_denial_happens_before_any_filesystem_or_subprocess(self):
         missing = Path("/missing/fincept-module.py")
-        with patch("research.kairos_bridge_v1.sidecar.subprocess.run") as call:
+        with patch("research.kairos_bridge_v1.sidecar.subprocess.Popen") as call:
             with self.assertRaisesRegex(BridgeRejected, "POLICY_DENIED"):
                 run_fixture("synthetic-reviewer", POLICY_TOOL, missing, missing)
             with self.assertRaisesRegex(BridgeRejected, "TOOL_MAPPING_NOT_ALLOWLISTED"):
@@ -128,7 +128,7 @@ class ReadOnlyBridgeTests(unittest.TestCase):
             runner = Path(d) / "fincept_volatility_fixture.py"
             source.write_text("malicious(): pass")
             runner.write_text("print('x')")
-            with patch("research.kairos_bridge_v1.sidecar.subprocess.run") as call:
+            with patch("research.kairos_bridge_v1.sidecar.subprocess.Popen") as call:
                 with self.assertRaisesRegex(BridgeRejected, "SHA_MISMATCH"):
                     run_fixture("synthetic-researcher", POLICY_TOOL, source, runner)
                 call.assert_not_called()

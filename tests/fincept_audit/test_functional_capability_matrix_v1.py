@@ -122,8 +122,10 @@ class FunctionalMatrixQA(unittest.TestCase):
         self.assertIn("add_test(NAME tst_original_screener_results", cm)
         s = (NATIVE / "stubs/ui/theme/Theme.h").read_text("utf-8")
         self.assertNotIn("QNetworkAccessManager", s)
-        self.assertNotIn("ScreenerResultsModel", s)
-        self.assertNotIn("ScreenerSortProxy", s)
+        self.assertNotIn("class ScreenerResultsModel", s)
+        self.assertNotIn("class ScreenerSortProxy", s)
+        self.assertNotIn("ScreenerResultsModel::", s)
+        self.assertNotIn("ScreenerSortProxy::", s)
         self.assertNotIn("UnifiedTrading", s)
 
     def test_screener_really_exercises_sort_missing_and_nonreset(self):

@@ -85,7 +85,7 @@ static void run_baseline() {
         {"region", QJsonArray{"us"}},
         {"sector", QJsonArray{"Technology"}},
         {"industry", QJsonArray{"Software"}},
-        {"exchange", QJsonArray{"ASE", "NMS", "NYQ", "NCM", "NGM"}},
+        {"exchange", QJsonArray{"NMS", "NGM", "NCM", "NYQ", "ASE"}},
         {"filters", QJsonArray{
             QJsonObject{{"field", "market_cap"}, {"op", "gte"}, {"value", 1.5e9}},
             QJsonObject{{"field", "price"}, {"op", "btwn"},

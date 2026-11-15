@@ -46,6 +46,36 @@ with `git hash-object`. `QT_QPA_PLATFORM=offscreen`; no installed Fincept app.
    The child branch's later **documentation-only** commits do not change the
    verified source/harness blob identities above.
 
+### Independent macOS Qt 6.8.3 / AppleClang 16 confirmation
+
+**VERIFIED on 2026-11-15:** separate scratch checkout of this child PR
+at exact Git HEAD `4b46727991af501ed9e4b461873ddfcf6ca55136`
+on the connected iMac (macOS 14.5, x86_64, AppleClang 16.0.0),
+using the open-source Qt **6.8.3** `clang_64` `qtbase` archive
+installed into a disposable `/private/tmp` directory by aqtinstall.
+The original Fincept application, profile and settings were **not opened**.
+
+The checkout was clean; independently verified unmodified test/source blobs:
+fixed C++ `5b544c214919835685a61562273c97b4d1c5c451`,
+test `e6d22c7f13e0fdcba6f9888f0e5b62584bd8054c`,
+CMake `e3000e7011a79fb43ce272c0409548c52acbb9e9`.
+Qt's `qmake -query QT_VERSION` reported `6.8.3`.
+
+**Native CMake build and link PASS; CTest 2/2 PASS** with
+**31/31 baseline + 7/7 strict checks = 38/38 PASS**, zero failures;
+`QT_QPA_PLATFORM=offscreen`. Mac CTest log SHA-256:
+`c6f6e25264c805e47ec895e7c9902ede690d7be140f87f3fb7f26eea84afa5c5`.
+A harmless missing-font alias warning was printed by Qt. This is a
+**second independent platform/compiler/Qt version confirmation** of the
+*component*, not of ScreenerScreen or Fincept as a product.
+
+An intermediate attempt to link the official Qt 6.8.3 Linux binaries
+inside a minimal Ubuntu 24.04 container was blocked **at linker/ABI dependency
+resolution** (including missing `libicui18n.so.73`); C++ compilation itself
+succeeded. **No Linux Qt 6.8.3 CTest PASS is claimed.** The valid Linux
+test evidence remains Qt 6.4.2/GCC 13.3, and the valid Qt 6.8.3 evidence is
+macOS/AppleClang.
+
 ## What the fix does
 
 - Validates the **scaled** `K/M/B/T` number is finite *after* multiplication
@@ -70,8 +100,8 @@ QT_QPA_PLATFORM=offscreen \
 
 ## Boundaries
 
-**Not verified:** Qt 6.8.3 / AppleClang cross-platform compatibility, complete
-ScreenerScreen GUI, Yahoo/provider errors, saved screens and watchlists, installed
+**Not verified:** complete ScreenerScreen GUI, Yahoo/provider errors,
+saved screens and watchlists, installed
 Fincept profile/PIN, network data, authenticated KAIROS tool API, scientific edge or
 trading. No market provider, account, real-price dataset, network order, broker,
 IG, application settings, privileged runner, scientific holdout, or installed

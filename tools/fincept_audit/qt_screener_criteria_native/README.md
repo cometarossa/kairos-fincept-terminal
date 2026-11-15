@@ -13,13 +13,14 @@ rewrite or mock of the query logic. No Fincept product code is edited.
 - `fincept-qt/src/services/screener/ScreenerService.h`: blob
   `7358f93addd4c80d7ad242c24c3a0b6a71bdfbd1`
 
-**Compile against a separate checkout verified at this exact original commit.**
+**Compile the QA branch against its untouched original source tree; verify the source blobs against the exact pinned original commit.**
 Do not run on the installed Fincept application/profile or fetch market data.
 
 ## Reproduction once Qt is available
 
 ```sh
-# Run from a verified standalone checkout of the original fork commit.
+# Run from this isolated QA branch checkout; independently verify its original
+# fincept-qt/src file blobs against fork main 7716ee8613249fb44c4d14036c5bc16ed6f34e97.
 cmake -S tools/fincept_audit/qt_screener_criteria_native \
   -B /tmp/fincept-original-criteria-qa \
   -DFINCEPT_SOURCE_DIR="$PWD/fincept-qt/src" \

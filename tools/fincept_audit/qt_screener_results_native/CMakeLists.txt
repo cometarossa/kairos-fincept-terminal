@@ -1,0 +1,20 @@
+cmake_minimum_required(VERSION 3.27)
+project(FinceptOriginalScreenerRowsQa LANGUAGES CXX)
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+find_package(Qt6 6.8.3 EXACT REQUIRED COMPONENTS Core Gui Test Sql)
+if(NOT DEFINED FINCEPT_SOURCE_DIR)
+  message(FATAL_ERROR "FINCEPT_SOURCE_DIR must point to a separately verified original Fincept source checkout")
+endif()
+if(NOT DEFINED SCREENER_CPP_SOURCE)
+  set(SCREENER_CPP_SOURCE "${FINCEPT_SOURCE_DIR}/screens/screener/ScreenerResultsModel.cpp")
+endif()
+add_executable(tst_original_screener_results
+  tst_original_screener_results.cpp
+  "${SCREENER_CPP_SOURCE}"
+)
+target_include_directories(tst_original_screener_results PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/stubs" "${FINCEPT_SOURCE_DIR}")
+target_link_libraries(tst_original_screener_results PRIVATE Qt6::Core Qt6::Gui Qt6::Test Qt6::Sql)
+enable_testing()
+add_test(NAME tst_original_screener_results COMMAND tst_original_screener_results)
+set_tests_properties(tst_original_screener_results PROPERTIES TIMEOUT 35)

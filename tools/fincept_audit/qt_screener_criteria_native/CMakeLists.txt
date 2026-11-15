@@ -21,5 +21,9 @@ add_test(NAME screener_criteria_baseline COMMAND tst_original_screener_criteria)
 set_tests_properties(screener_criteria_baseline PROPERTIES
   ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 40
 )
+add_test(NAME screener_criteria_fail_closed COMMAND tst_original_screener_criteria --probe-defects)
+set_tests_properties(screener_criteria_fail_closed PROPERTIES
+  ENVIRONMENT "QT_QPA_PLATFORM=offscreen" TIMEOUT 40
+)
 # The separate --probe-defects mode intentionally checks suspected source defects.
 # Do NOT mark it passing before running against the exact original source.

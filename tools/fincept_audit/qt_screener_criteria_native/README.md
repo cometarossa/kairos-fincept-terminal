@@ -1,92 +1,80 @@
-# Source-real Screener Criteria Builder QA (2026-11-15)
+# ScreenerCriteriaBuilder — native QA and fail-closed regression (2026-11-15)
 
-**Status: DRAFT / NATIVE EXECUTION PENDING.** This is a QA-only harness. It
-compiles the **unmodified original** Qt Widgets implementation, not a Python
-rewrite or mock of the query logic. No Fincept product code is edited.
+**DRAFT / VERIFIED COMPONENT TESTS / NOT A FULL PRODUCT OR MERGED FIX.**
 
-## Pinned original inputs
+This is an isolated, synthetic-only Qt Widgets harness. The independent QA parent
+[Fincept #52](https://github.com/cometarossa/kairos-fincept-terminal/pull/52) tested
+the original unchanged Fincept source at fork `main`
+`7716ee8613249fb44c4d14036c5bc16ed6f34e97`. This **child fix branch**
+changes the original `ScreenerCriteriaBuilder.cpp`, retaining the same isolated
+harness with stricter CTest assertions. The change must not merge ahead of its QA
+parent without review/rebase.
 
-- Fork original `main` commit: `7716ee8613249fb44c4d14036c5bc16ed6f34e97`
-- `fincept-qt/src/screens/screener/ScreenerCriteriaBuilder.cpp`: blob
-  `0bd59d3911b32f3758de04e2b6b6b20eebd4be0c`
-- `ScreenerCriteriaBuilder.h`: blob `e9eb9c7eb1c268b0265f8ac22b7cb889964c1999`
-- `fincept-qt/src/services/screener/ScreenerService.h`: blob
-  `7358f93addd4c80d7ad242c24c3a0b6a71bdfbd1`
+## Exact source/test identity
 
-**Compile the QA branch against its untouched original source tree; verify the source blobs against the exact pinned original commit.**
-Do not run on the installed Fincept application/profile or fetch market data.
+| Input | Verified Git blob |
+|---|---|
+| Original `ScreenerCriteriaBuilder.cpp` | `0bd59d3911b32f3758de04e2b6b6b20eebd4be0c` |
+| Fixed `ScreenerCriteriaBuilder.cpp` | `5b544c214919835685a61562273c97b4d1c5c451` |
+| Original `ScreenerCriteriaBuilder.h` | `e9eb9c7eb1c268b0265f8ac22b7cb889964c1999` |
+| Test harness `tst_original_screener_criteria.cpp` (fixed branch) | `e6d22c7f13e0fdcba6f9888f0e5b62584bd8054c` |
+| Regression CMake `CMakeLists.txt` (fixed branch) | `e3000e7011a79fb43ce272c0409548c52acbb9e9` |
 
-## Reproduction once Qt is available
+## Actual source-real native results
+
+**Environment verified at execution:** ZimaBlade, transient `ubuntu:24.04` Docker
+container, GNU C++ 13.3.0, CMake 3.28.3 and Ubuntu-packaged Qt 6.4.2
+(Core, Gui, Widgets, Test, Sql). Code checkout mounted read-only and verified
+with `git hash-object`. `QT_QPA_PLATFORM=offscreen`; no installed Fincept app.
+
+1. **Original parent #52, exact QA HEAD `fb99831e6eb209c48ebc9dd642d00ca6b3a80846`:**
+   native build successful; CTest **1/1 PASS** with **31/31 baseline checks PASS**.
+   The separately run `--probe-defects` had **2 expected assertion failures**
+   out of 3 checks and returned exit 1:
+   - `1e308T` was accepted as a numeric filter despite a nonfinite scaled value.
+   - An emptied replacement catalog still allowed building a stale query.
+   Baseline CTest log SHA-256:
+   `f6180778730d3edc1e9007e25b70766a2a63e8abcb7e79d6fc909ecfb206cdfb`.
+   Original strict-probe log SHA-256:
+   `9347fe571a571f1c8757df718170c87d5378481356dff1141e9c917a053e50a7`.
+
+2. **Fixed child exact code HEAD `f4b6f11a827592b2185dc6942627542be7456aab`:**
+   native build successful; CTest **2/2 PASS** (baseline **31/31**, registered
+   fail-closed suite **7/7**, zero failures).
+   Fixed CTest log SHA-256:
+   `0a3cc43f7105106aa86862a12a88f503cce28b053cde5a60c17a08f90870ad00`.
+   The child branch's later **documentation-only** commits do not change the
+   verified source/harness blob identities above.
+
+## What the fix does
+
+- Validates the **scaled** `K/M/B/T` number is finite *after* multiplication
+  before assigning the output; this rejects the reproduced `1e308T` case.
+- Refuses to construct a Screener query when the field catalog is absent, returning
+  a user-facing error **without touching the prior output query**.
+- Clears stale criterion rows when a replacement catalog has no usable fields.
+- Registers the strict fail-closed probes as a **second CTest** only in the
+  fixed branch, without hiding a known-red original test.
+
+## Reproduce against a verified isolated checkout
 
 ```sh
-# Run from this isolated QA branch checkout; independently verify its original
-# fincept-qt/src file blobs against fork main 7716ee8613249fb44c4d14036c5bc16ed6f34e97.
 cmake -S tools/fincept_audit/qt_screener_criteria_native \
-  -B /tmp/fincept-original-criteria-qa \
+  -B /tmp/fincept-criteria-native-build \
   -DFINCEPT_SOURCE_DIR="$PWD/fincept-qt/src" \
-  -DCMAKE_PREFIX_PATH="/path/to/Qt/6.8.3/macos" \
   -DCMAKE_BUILD_TYPE=Release
-cmake --build /tmp/fincept-original-criteria-qa --parallel 2
+cmake --build /tmp/fincept-criteria-native-build --parallel 2
 QT_QPA_PLATFORM=offscreen \
-  ctest --test-dir /tmp/fincept-original-criteria-qa -V --output-on-failure
-# Run separately, report actual failures rather than hiding as a passing suite:
-QT_QPA_PLATFORM=offscreen \
-  /tmp/fincept-original-criteria-qa/tst_original_screener_criteria --probe-defects
+  ctest --test-dir /tmp/fincept-criteria-native-build -V --output-on-failure
 ```
 
-Minimum tested-in-CMake dependency declaration is Qt 6.4 (Widgets, Core,
-Gui, Test, Sql); the **exact Qt build/version actually run must be reported**.
-No claim of Qt 6.8.3 success is made by the mere presence of this harness.
+## Boundaries
 
-## Coverage in the baseline executable
-
-- No catalog/no criteria refuse a request.
-- Synthetic catalog produces default US-major-exchange, market-cap >= 2B,
-  descending query, without touching Yahoo.
-- Catalog field labels, count/offset preserved (builder does not change paging).
-- Explicit custom region, sector, industry, exchange group, two filters and
-  ascending sort round-trip through `load_query -> build_query`.
-- Invalid text and missing BETWEEN upper bound fail with an error and visible
-  invalid-cell state; output is not partially overwritten.
-- Corrected value can be built; empty unfiltered query refused; predefined
-  input is not silently converted to a custom query.
-- Programmatic loads do not emit user-edit events.
-
-All of these are **test expectations**, not observed PASSes, until native
-build/CTest output is attached for the exact source and QA commit.
-
-## Deliberately separate strict probes / potential bugs
-
-The optional `--probe-defects` mode makes two explicit fail-closed assertions.
-They are source-informed *hypotheses to verify*, not yet reproduced runtime
-defects:
-
-1. `parse_value` checks finite numeric input **before** multiplying a
-   `K/M/B/T` suffix, with no apparent post-multiplication finite check.
-   Extremely large numeric input such as `1e308T` could become Infinity and
-   be accepted into a structured filter.
-2. `set_catalog` clears `fields_by_id_`, but if the replacement catalog
-   has no fields then `reset_to_default` returns immediately; old criteria
-   rows may remain and `build_query` does not explicitly require
-   `has_catalog()`, possibly allowing a stale field to be sent.
-
-The original builder also **sorts** reversed BETWEEN bounds instead of rejecting
-them; this is observable source semantics, not a separately verified GUI policy
-decision. Establish the intended product behavior before classifying it a bug.
-
-Do not convert any of these into an asserted PASS, CI success, or product
-certification without an exact-source native test run. A code fix, if needed,
-should be independent of this QA-only draft and have its own regression tests.
-
-## Safety and completeness
-
-No original code under `fincept-qt/` changed. The fixture is synthetic and
-never creates a provider, saved screen, watchlist, QSettings, service, socket,
-broker connection, order, account session, persistent app profile, or remote
-model call. `QT_QPA_PLATFORM=offscreen` avoids showing a screen. The complete
-Screener GUI, real Yahoo queries, persistence, provider error path, user PIN,
-full terminal launch and KAIROS tool registration remain **NOT VERIFIED**.
-
-This draft intentionally **does not add a GitHub Actions workflow**, modify
-the installed application, or merge itself. The 25/25 ScreenerResultsModel
-evidence in draft #51 is separate and is **not rerun or recounted** here.
+**Not verified:** Qt 6.8.3 / AppleClang cross-platform compatibility, complete
+ScreenerScreen GUI, Yahoo/provider errors, saved screens and watchlists, installed
+Fincept profile/PIN, network data, authenticated KAIROS tool API, scientific edge or
+trading. No market provider, account, real-price dataset, network order, broker,
+IG, application settings, privileged runner, scientific holdout, or installed
+Fincept process was touched by these tests. Fincept GitHub-native CI is still
+**NOT VERIFIED**. This is source-real **component** evidence, not product release
+authority. Keep the fix PR **DRAFT** pending independent review.

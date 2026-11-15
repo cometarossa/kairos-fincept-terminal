@@ -147,6 +147,7 @@ static void probe_defects() {
     ScreenerCriteriaBuilder builder;
     builder.set_catalog(catalog());
     auto inputs = last_row_inputs(builder);
+    CHECK(inputs.size() == 2, "strict fixture has editable numeric row");
     if (inputs.size() == 2) {
         inputs.at(0)->setText("1e308T");
         ScreenerQuery q;
@@ -157,10 +158,16 @@ static void probe_defects() {
     builder.reset_to_default();
     builder.set_catalog(QJsonObject{{"fields", QJsonArray{}}});
     ScreenerQuery q;
+    q.sort_field = "preserved-on-failure";
     QString error;
     CHECK(!builder.has_catalog(), "empty replacement catalog is unusable");
     CHECK(!builder.build_query(&q, &error),
           "stale criteria must not survive removal of catalog fields");
+    CHECK(!error.isEmpty(), "catalog failure produces a diagnostic");
+    CHECK(q.sort_field == "preserved-on-failure", "catalog failure does not change output");
+    QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
+    CHECK(builder.findChildren<QWidget*>("screenerCriterionRow").isEmpty(),
+          "replacement catalog leaves no stale criterion widgets");
 }
 
 int main(int argc, char** argv) {

@@ -243,6 +243,11 @@ void ScreenerCriteriaBuilder::set_catalog(const QJsonObject& catalog) {
         populate_field_combo(sort_field_);
     }
     loading_ = false;
+    // A replaced/failed catalogue must not leave stale selectable numeric rows.
+    if (!has_catalog()) {
+        clear_criteria();
+        return;
+    }
     reset_to_default();
 }
 
@@ -461,7 +466,11 @@ bool ScreenerCriteriaBuilder::parse_value(const QString& text, double* out) {
     const double v = QLocale::c().toDouble(t, &ok);
     if (!ok || !std::isfinite(v))
         return false;
-    *out = v * mult;
+    const double scaled = v * mult;
+    // Multiplication by K/M/B/T can overflow even when v itself is finite.
+    if (!std::isfinite(scaled))
+        return false;
+    *out = scaled;
     return true;
 }
 
@@ -479,6 +488,12 @@ QString ScreenerCriteriaBuilder::format_value(double v) {
 // ── Query <-> form ────────────────────────────────────────────────────────────
 
 bool ScreenerCriteriaBuilder::build_query(services::ScreenerQuery* out, QString* error, bool mark_invalid) {
+    if (!out || !error)
+        return false;
+    if (!has_catalog()) {
+        *error = tr("Screener fields are unavailable. Reload the catalogue.");
+        return false;
+    }
     QJsonObject crit;
     const auto put_single = [&crit](const char* key, const QString& value) {
         if (!value.isEmpty())

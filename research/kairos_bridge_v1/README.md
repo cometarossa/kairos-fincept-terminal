@@ -76,6 +76,64 @@ system services are modified. It is not auto-forwarded to KAIROS.
   Fincept fork GitHub Actions are disabled: **NO FINCEPT CI GREEN CLAIM**.
   Source dependencies and environment have not been independently attested.
 
+## 2026-11-15 — real sidecar subprocess-output regression and Mac smoke
+
+**OPEN DRAFT / code published / local exact-blob evidence only.** The
+existing research sidecar PR #25 was updated in place, **not** forked into a
+duplicate PR. Before the docs-only commit, the exact code/test head was
+`cc2f9bb2b5947e593b95b2d6e0085448c6518f4a`:
+
+| Component | Published Git blob, verified against locally tested file |
+|---|---|
+| `research/kairos_bridge_v1/sidecar.py` | `b8070312dec300b8e7a2b24913c178b33b91ca99` |
+| Existing `test_readonly_sidecar.py` | `30b4f221a375cf2f7fce187bad328775a43f94e5` |
+| Added `test_bounded_capture.py` | `824d0f6014a4e0dc0c48d3817feb09b884bf3555` |
+
+The previously unbounded `subprocess.run(..., capture_output=True)` was
+replaced with a POSIX private-process-group `Popen` / selector reader:
+`MAX_EVIDENCE_BYTES` (16 KiB) bounds **stdout + stderr together**;
+**only stdout** is decoded as the evidence JSON. Warnings on stderr do
+not contaminate valid stdout, and stderr is never returned as evidence.
+An over-limit output, invalid UTF-8 stdout, bad process exit or deadline
+failure fails closed. Private process group cleanup uses `SIGKILL` even
+after the immediate child exits; this does not authorize a privileged
+service. Original denial tests now patch the actually invoked `Popen`,
+rather than the superseded `subprocess.run`.
+
+**Mac local:** Python 3.12.9, `python -m unittest discover -s
+tests/fincept_kairos_bridge -v`: **13/13 PASS, zero failures**, including
+boundary 4096/4097 byte cases, shared 2048+2048 / 2048+2049 stdout-stderr
+limits, benign stderr with valid stdout JSON, bad UTF-8, timeout and
+existing authorization/evidence/report safety tests. `git diff --check`
+PASS. All three test/source blobs independently matched GitHub.
+
+**Separate real offline end-to-end re-smoke:** Mac Python 3.9.9,
+unmodified original Fincept `volatility_indicators.py` pinned SHA-256
+`76c8a2329c3109d801222ecc987f57005041533e8264c90f1d8b46a4c0109897`,
+and exact PR #15 fixture script pinned SHA-256
+`35574f23f043811d0524bd17c11dae7a48cc5234e5f0117e0fe60393762879d3`.
+Actual `python -m research.kairos_bridge_v1.sidecar --principal
+synthetic-researcher --tool quant.volatility.read --fincept-module
+fincept-qt/scripts/technicals/volatility_indicators.py --fixture-runner
+/path/to/pinned/fincept_volatility_fixture.py` **exit 0** with 120
+synthetic bars / all 8 expected indicators. The returned
+`fincept_kairos_readonly_bridge_v1` envelope has
+`kind=SYNTHETIC_RESEARCH_INPUT_ONLY`,
+`verdict=RESEARCH_INPUT_ONLY_NOT_SCIENTIFICALLY_ACCEPTED`,
+`principal_is_authenticated=false`, `scientific_status=NOT_EVALUATED`,
+`broker_authority=false`, `trading_authority=false`,
+`external_api_calls=0`, `provider_credits=0`. Smoke stdout SHA-256
+`28c6b08b9c23f6792a92ab8afc650cf5719a21bc3fef3a57fb84a391e57b5dfa`,
+stderr 0 bytes. No `--out` file persistence or existing app/profile use.
+
+**Limits:** the synthetic toy principal is **not authenticated**;
+Python user-installed dependencies are not supply-chain attested;
+Windows portability is **NOT VERIFIED** (this capture uses POSIX
+selectors/process groups); full Fincept Qt workflows, provider data,
+scientific predictive merit, KAIROS tool dispatch, native fork CI,
+broker access and deployment are **NOT VERIFIED**. This is not a trading
+gateway, validated strategy or authorization to run a live or demo order.
+
 ## Safe interpretation / next steps
 
 The JSON is not a market observation, data entitlement, scientific

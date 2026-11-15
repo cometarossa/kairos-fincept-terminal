@@ -16,6 +16,9 @@ from hashlib import sha256
 import json
 import math
 import os
+import selectors
+import signal
+import time
 from pathlib import Path
 import site
 import subprocess
@@ -115,6 +118,59 @@ def _validate_fixture(evidence: object) -> dict:
     return evidence
 
 
+def _capture_bounded(argv: list[str], *, cwd: str, env: dict[str, str],
+                     timeout: float = RUN_TIMEOUT_SECONDS,
+                     limit: int = MAX_EVIDENCE_BYTES) -> tuple[int, str]:
+    """POSIX-only bounded stdout+stderr; no unbounded communicate/capture_output."""
+    proc = subprocess.Popen(argv, cwd=cwd, env=env, stdin=subprocess.DEVNULL,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                            start_new_session=True)
+    selector = selectors.DefaultSelector()
+    stdout_bytes = bytearray()
+    total_bytes = 0
+    # Bound BOTH streams, but only stdout is the structured evidence payload.
+    # A benign warning on stderr must not corrupt otherwise valid JSON.
+    for pipe, is_stdout in ((proc.stdout, True), (proc.stderr, False)):
+        os.set_blocking(pipe.fileno(), False)
+        selector.register(pipe, selectors.EVENT_READ, data=is_stdout)
+    deadline = time.monotonic() + timeout
+    try:
+        while selector.get_map():
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise BridgeRejected("PINNED_TOOL_UNAVAILABLE_OR_TIMEOUT")
+            for key, _ in selector.select(min(remaining, 0.1)):
+                chunk = os.read(key.fileobj.fileno(), min(65536, limit + 1 - total_bytes))
+                if not chunk:
+                    selector.unregister(key.fileobj)
+                else:
+                    total_bytes += len(chunk)
+                    if total_bytes > limit:
+                        raise BridgeRejected("OVERSIZE_FIXTURE_OUTPUT")
+                    if key.data:
+                        stdout_bytes.extend(chunk)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise BridgeRejected("PINNED_TOOL_UNAVAILABLE_OR_TIMEOUT")
+        code = proc.wait(timeout=remaining)
+        try:
+            return code, stdout_bytes.decode("utf-8", errors="strict")
+        except UnicodeDecodeError as exc:
+            raise BridgeRejected("INVALID_FIXTURE_ENCODING") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise BridgeRejected("PINNED_TOOL_UNAVAILABLE_OR_TIMEOUT") from exc
+    finally:
+        # Kill the private process group even if the direct child already exited.
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        proc.wait()
+        selector.close()
+        proc.stdout.close()
+        proc.stderr.close()
+
+
 def _parse_stdout(stdout: str) -> dict:
     if len(stdout.encode("utf-8")) > MAX_EVIDENCE_BYTES:
         raise BridgeRejected("OVERSIZE_FIXTURE_OUTPUT")
@@ -171,18 +227,16 @@ def run_fixture(principal: str, requested_tool: str, source: Path, harness: Path
             "runpy.run_path(runner,run_name='__main__')"
         )
         try:
-            proc = subprocess.run(
+            returncode, stdout = _capture_bounded(
                 [sys.executable, "-I", "-c", entrypoint, dependency_site,
                  str(runner_copy), "--module-file", str(source_copy)],
-                cwd=tmp, env=env, timeout=RUN_TIMEOUT_SECONDS, text=True,
-                capture_output=True, check=False,
+                cwd=tmp, env=env,
             )
-        except (OSError, subprocess.TimeoutExpired) as exc:
+        except OSError as exc:
             raise BridgeRejected("PINNED_TOOL_UNAVAILABLE_OR_TIMEOUT") from exc
-        if proc.returncode != 0:
-            # Do not leak stderr or filesystem details into bridge/LLM output.
+        if returncode != 0:
             raise BridgeRejected("PINNED_TOOL_FAILED")
-        data = _parse_stdout(proc.stdout)
+        data = _parse_stdout(stdout)
 
     digest = sha256(
         json.dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")

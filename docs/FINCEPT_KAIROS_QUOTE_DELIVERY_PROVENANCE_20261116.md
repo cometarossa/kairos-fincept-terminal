@@ -125,3 +125,107 @@ finish the 783-operation original application build and link, then headless
 Qt startup/selftests on that **changed binary**, without broker credentials
 or any external market connection. Exact Qt 6.8.3 remains required for
 release certification.
+
+## 2026-11-16 — Native full original Fincept Qt 6.8.3 build + isolated runtime verification
+
+**New verified milestone, stronger than all previous Qt 6.8.2 partial builds:** On the
+connected Intel iMac (macOS 14.5, Core i9-12900K, 24 logical CPU threads,
+128 GiB RAM), an isolated Python 3.11 `aqtinstall` installed the official
+**Qt 6.8.3 EXACT** macOS `clang_64` SDK and the modules specified in the
+original Fincept CI workflow (Charts, WebSockets, Multimedia, WebEngine,
+WebChannel, Positioning, SerialPort). SDK footprint ~7.4 GiB in
+`~/Dev/qwen-lab/qt-sdk-fincept/` — not system-installed and not deployed.
+
+**Source provenance and PR stacking:** A temporary *full* checkout of this
+Fincept [DRAFT #56](https://github.com/cometarossa/kairos-fincept-terminal/pull/56)
+at exact code/docs commit
+`90b01d6c898166cded42261b14d3c135cd41f972` was used. The only
+deliberate uncommitted overlay in this isolated build checkout was the
+`GIT_SHALLOW TRUE` → `FALSE` change from separate
+[QGeoView DRAFT #57](https://github.com/cometarossa/kairos-fincept-terminal/pull/57)
+to allow the original historical SHA checkout. These drafts **have not been
+merged**; no original application runtime/broker files were modified beyond
+the already-documented #55/#56 stack. This source combination is an
+**isolated validation composition**, not a reviewed merged main branch.
+
+**Full CMake configure/generate PASS** with Apple Clang 16, `Ninja`,
+`CMAKE_BUILD_TYPE=Release`, `FINCEPT_QT_PIN_MODE=EXACT`, original
+`-DCMAKE_PREFIX_PATH=/.../qt-sdk-fincept/6.8.3/macos`,
+`-DOPENSSL_ROOT_DIR=/opt/local`, `-DCMAKE_OSX_ARCHITECTURES=x86_64`,
+`-DCMAKE_OSX_DEPLOYMENT_TARGET=13.0`, `FINCEPT_DOWNLOAD_YTDLP=OFF`,
+`FINCEPT_BUILD_TESTS=OFF`, `FINCEPT_BUILD_INSTALLER=OFF` and
+`FINCEPT_ENABLE_LTO=OFF`. CMake printed `Qt version: 6.8.3 (pin mode:
+EXACT)`, `Configuring done` and `Generating done`.
+
+**Full original native executable build/link PASS: 783/783 Ninja actions.**
+`cmake --build ... --target FinceptTerminal --parallel 10` exited **0**
+and generated the original
+`FinceptTerminal.app/Contents/MacOS/FinceptTerminal` executable (about
+60 MiB). The original modified `MarketsTools.cpp` built as a standalone
+object, and `MarketDataService.cpp` was included in the generated
+`Unity/unity_7_cxx.cxx` compiled unit. Linker reported a non-fatal
+duplicate-md4c-library warning; not an error. **This is a real exact-Qt
+full-app build, not just object-file smoke.** Not a signed/notarized/
+installed redistributable (yt-dlp provisioning explicitly off).
+
+**Native original binary executed with non-network trading sandbox:**
+Each test had an empty temporary `HOME`, no forwarded API credentials,
+`QT_QPA_PLATFORM=offscreen`, and macOS `sandbox-exec`. The 11
+non-MCP-server selftests denied *all* networking. For
+`--selftest-mcp-server`, only loopback bind/connect was allowed and
+an independent sandbox preflight verified that external sockets still
+failed with `EPERM`. The server's original selftest uses an OS-assigned
+127.0.0.1-only port, synthetic token and `allow_actions=false`.
+
+- `--selftest-list` from the **newly compiled binary**: exit 0 and enumerated
+  the real 12 built-in suites.
+- **12/12 native original selftest suites PASS**, including tool registry,
+  LLM tool formats, MCP server, feeds, dock layout, live tables, F&O algo,
+  universe scan, paper, portfolio monitor, portfolio replication and Arena.
+- Original **MCP HTTP selftest: 41 passed, 0 failed**, including bearer
+  auth denial, localhost/Origin rejection, `tools/list` and `tools/call`
+  responses, blocked destructive actions, approval-gated denial, chunked
+  HTTP and port cleanup.
+- Original tool registry selftest reported `recall@5 = 0.969` with
+  `0 no-handler / 0 schema errors`; **this is tool retrieval QA, not
+  market strategy, return, or financial model evidence**.
+- **Original GUI screen-construction `--smoke-test`: PASS**, exit 0,
+  `[Smoke] walking 52 screens`, exactly 52 screen-construction lines and
+  `[Smoke] OK: all 52 screens constructed`, including Dashboard, Markets,
+  Screener, Backtesting, Portfolio, QuantLib, AI Quant Lab and MCP Servers.
+  This executed in Qt offscreen mode under **zero external networking**;
+  a warning that the offscreen plugin cannot create an OpenGL context did
+  not prevent the 52/52 source smoke or its exit-0 result.
+
+**New inspectable opt-in regression**:
+`tests/fincept_original/test_full_qt_native_selftests.py`. It skips
+explicitly when `FINCEPT_QT_NATIVE_BINARY` is absent, fails closed if a
+selected binary/sandbox is unavailable, independently asserts loopback-only
+network policy rejects external sockets, enumerates all 12 suites and
+runs them against the chosen original executable, and performs the
+52-screen UI construction walk. On the exact newly built macOS binary,
+**4/4 unittest PASS**; without an explicitly selected binary, intentional
+SKIP. This test runs a compiled binary; it does not compile Fincept itself.
+To rerun in the Mac lab:
+
+```sh
+FINCEPT_QT_NATIVE_BINARY=/absolute/path/to/FinceptTerminal.app/Contents/MacOS/FinceptTerminal \
+  python3 -m unittest discover -s tests/fincept_original \
+  -p 'test_full_qt_native_selftests.py' -v
+```
+
+**Still not verified / NO promotion:** actual user-driven GUI interactions,
+Yahoo/provider or IG data delivery, exchange market-as-of/clock proof,
+real broker authentication/session safety, authenticated KAIROS-to-Fincept
+read-only integration, actual backtest accuracy or profit, packaging,
+macOS notarization, Windows/Linux exact-Qt full builds, or any DEMO/LIVE
+broker execution. The runtime QA does **not** call IG or place any order.
+Existing operator Fincept installation and production services are unchanged.
+The isolated native Qt SDK, build source and binary remain in the dedicated
+Mac laboratory for reproducible follow-up; no service was deployed.
+
+**F1 next:** independently verify the original MCP quote tool's
+provenance/stale status on offline synthetic data through an authenticated
+read-only KAIROS boundary, and check actual GUI interactions + persistent
+settings in a separate no-credential lab. Native compile and screen
+construction are no longer the F0 blockers on macOS.

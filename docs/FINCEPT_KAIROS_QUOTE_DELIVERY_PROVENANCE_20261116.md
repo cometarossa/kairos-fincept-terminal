@@ -63,3 +63,65 @@ Compiler flags include `-std=c++20 -O0 -fPIC`, original `fincept-qt/src` and `fi
 **New reproducible opt-in smoke test:** `tests/fincept_original/test_qt6_market_original_compile.py` compiles each original translation unit to an object in a temporary directory. Run with `FINCEPT_QT_COMPILE_REQUIRED=1 python3 -m unittest discover -s tests/fincept_original -p 'test_qt6_market_original_compile.py' -v` in an isolated Qt6.8 development environment. With required mode on, an absent/incompatible SDK **fails** instead of presenting a false green; without required mode it is explicitly **SKIPPED**. On the iMac without Qt6 headers, both behaviors were directly checked.
 
 **NOT VERIFIED / STILL BLOCKED:** complete Fincept `FinceptTerminal` CMake configure/link/build, Qt6 moc/linker and plugin packaging, runtime GUI screens with this changed binary, signal delivery/event-loop integration, provider exchange as-of, authoritative time/freshness, IG accounts, KAIROS authenticated tool integration, order/trading execution, and exact Qt 6.8.3. The QEMU Debian GUI smoke used a **different previously installed binary** and cannot be counted as a test of these source changes. Fork GitHub Actions remain disabled; no setting or runner was changed. Keep PR in DRAFT.
+
+## 2026-11-16 — Full original Fincept 4.5.1 CMake graph: CONFIGURE PASS
+
+**New evidence, separate from the two-file Qt object compilation:** an isolated `debian:trixie` Docker QA container was created on the authorized ZimaBlade with 2 CPU / 5 GiB memory / 256 PIDs and no KAIROS, IG, home, or credential mounts. The **full** `fincept-qt/` project source (about 60 MiB; >1,000 C++ sources) was copied from the public fork at exact draft #56 SHA `4696ecf570018f838f75cb70e74c1d4865f508cf`. Only Qt/CMake developer dependencies and public versioned third-party source trees were fetched during preparation. No Fincept runtime, provider, broker or IG API was invoked.
+
+**VERIFIED:** CMake 3.31, GCC/G++14, Debian-packaged Qt **6.8.2** (MINOR mode; project exact release pin is 6.8.3), required Qt6 Widgets/Charts/PrintSupport/Network/Sql/Concurrent/Multimedia/LinguistTools, OpenSSL, Zlib and original dependencies QXlsx, md4c, QGeoView, Qt Advanced Docking System, ed25519. CMake returned **exit 0** with both `Configuring done` and `Generating done` and wrote the Ninja graph for the full `FinceptTerminal` executable. This is a **full-project configure PASS**, not yet an application BUILD/LINK/GUI PASS.
+
+**Environment-only resolutions, not source changes:**
+- Minimal Debian missed `ca-certificates`: first FetchContent TLS download failed safely. Installed CA certificates; TLS verification stayed on.
+- Qt private GUI targets required XKB development packages and the `qt6-base-private-dev` versioned headers. Installed genuine Debian packages, rather than fabricating include paths.
+- Existing original CMake specifies QGeoView pinned SHA `4b2c52c80940e1073c259ded1a57df83036ba1c9` alongside `GIT_SHALLOW TRUE`. The first shallow clone could not check out that historical SHA. A **separate exact-SHA fetch** of this public commit succeeded and the validated source directory was passed as `-DFETCHCONTENT_SOURCE_DIR_QGEOVIEW=...`; original CMake source was not edited. This is a distinct reproducibility defect to review independently before release builds.
+
+**Lab configuration:**
+```sh
+cmake -S /workspace/fincept-qt -B /workspace/fincept-build -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DFINCEPT_QT_PIN_MODE=MINOR \
+  -DFINCEPT_DOWNLOAD_YTDLP=OFF -DFINCEPT_BUILD_TESTS=OFF \
+  -DFINCEPT_BUILD_INSTALLER=OFF -DFINCEPT_ENABLE_LTO=OFF \
+  -DFETCHCONTENT_SOURCE_DIR_QGEOVIEW=/workspace/fincept-build/_deps/qgeoview-src
+```
+
+Network was disconnected **before** invoking `cmake --build --target FinceptTerminal`. CMake generated 783 Ninja operations; 686 compiler nodes include Fincept and its component dependencies. A bounded full build was started under 2 CPU / 5 GiB; final compile/link disposition is recorded separately below when verified.
+
+**Scope limitations:** Full project configuration with Qt 6.8.2 does not establish exact 6.8.3 compatibility, success of linking, platform deployment, Qt event-loop correctness or market-data provenance adequacy. `yt-dlp` auto-provisioning was disabled for offline QA and CMake warned that it was absent; this does not mean the release packaging is complete. No IG login, market fetch, order or trading authority.
+
+## Full original FinceptTerminal build disposition — bounded QA
+
+The full Ninja build was **started after network disconnection** with
+`cmake --build /workspace/fincept-build --target FinceptTerminal --parallel 2`,
+protected by `timeout 420s` and a 5 GiB container memory limit.
+
+**VERIFIED outcome:** `timeout` exit **124**, the Ninja log reached **[94/783]**
+operations, then recorded `ninja: build stopped: interrupted by user` when
+the watchdog terminated the process. That diagnostic is the Ninja wording for
+the watchdog signal, **not** evidence the operator manually interrupted it.
+
+Successful intermediate artifacts included the original versioned QXlsx
+static library (`libQXlsxQt6.a`), md4c HTML static library, QGeoView shared
+library (`libqgeoview.so`) and Qt Advanced Docking System static library
+(`libqtadvanceddocking-qt6_static.a`). Qt MOC/UIC generation, multiple
+translation files and the 1183-file Python-script sync also ran. No C++
+`error:` or `FAILED:` marker was found in the bounded build log before
+termination, **but most original Fincept application source files were not yet
+compiled**. No `FinceptTerminal` executable exists from this trial.
+
+**Therefore: full Qt CMake CONFIGURE/GENERATE = PASS; external dependency
+builds = partial PASS; complete original FinceptTerminal COMPILE/LINK/RUNTIME
+= NOT VERIFIED**. No profitability, market freshness, authenticated read-only
+MCP transport or broker trade functionality was tested.
+
+A separate standalone [QGeoView pin checkout fix, Fincept DRAFT #57](https://github.com/cometarossa/kairos-fincept-terminal/pull/57)
+addresses the reproducible historical-SHA/shallow-clone issue at
+`9d8d2a17529830af3cbbd784f33658f7a6a7ba28`. It has 2/2 offline
+synthetic Git regressions PASS but has **not** been merged, and no fresh full
+CMake run with that new pin fix alone has been certified yet. Fincept DRAFT
+#55/#56 remain a distinct stack.
+
+**Next QA gate:** use a bounded, higher-throughput isolated C++ builder to
+finish the 783-operation original application build and link, then headless
+Qt startup/selftests on that **changed binary**, without broker credentials
+or any external market connection. Exact Qt 6.8.3 remains required for
+release certification.

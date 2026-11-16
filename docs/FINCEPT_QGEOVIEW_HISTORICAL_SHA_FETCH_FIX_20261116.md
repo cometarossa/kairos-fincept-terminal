@@ -49,3 +49,43 @@ exact code or sign off the patch.
 
 No trading, provider/IG account, credentials, GitHub Actions permissions,
 runtime services, execution authority or deployment was changed.
+
+## 2026-11-16 — Fresh live GitHub FetchContent verification (follow-up)
+
+**Real source-acquisition smoke PASS on the Intel iMac with CMake 4.0.1.**
+The new `tests/fincept_original/test_qgeoview_fetchcontent_integration.py`
+extracts the **unchanged real QGeoView `FetchContent_Declare` block** from
+`fincept-qt/CMakeLists.txt`, copies the unchanged original CMake AGL patch
+script into a temporary read-only-purpose harness, then requests a **fresh
+real GitHub clone** via `FetchContent_Populate(QGeoView)`. No
+`FETCHCONTENT_SOURCE_DIR_QGEOVIEW` override is used, and Git verification
+remains enabled.
+
+The isolated harness asserts:
+- actual Git `HEAD` is exactly `4b2c52c80940e1073c259ded1a57df83036ba1c9`;
+- the original patch phase has a CMake-generated stamp, and the fetched
+  QGeoView source contains no residual `-framework AGL`;
+- fresh CMake configure and generate both exit successfully;
+- the result contains the verified SHA marker.
+
+The first integration test revealed only a **harness assertion error**:
+CMake suppresses the nested successful FetchContent patch console log,
+so looking for the patch's console message falsely failed even though
+checkout and generation succeeded. Replacing that assertion with the
+real CMake patch stamp yielded a **1/1 PASS** on a fresh temp directory.
+The pre-existing independent offline Git-history checks remain **2/2 PASS**.
+
+Run this opt-in network validation via:
+
+```bash
+FINCEPT_QGEOVIEW_NETWORK_FETCH_REQUIRED=1 python3 -m unittest \
+  discover -s tests/fincept_original \
+  -p 'test_qgeoview_fetchcontent_integration.py' -v
+```
+
+Without that environment switch, the network test **SKIPS explicitly**.
+It never contacts any market, IG/broker or production service, and creates
+only temporary QA files. This closes **fresh real GitHub fetch/pin/patch
+verification for QGeoView with CMake 4.0.1**, not the broader Qt GUI/full
+Fincept compile/link/runtime gate. A separate containerized full-project
+CMake run with this PR's changed CMake has **not yet been performed**.

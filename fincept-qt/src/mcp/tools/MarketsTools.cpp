@@ -3,6 +3,7 @@
 #include "mcp/tools/MarketsTools.h"
 
 #include "core/logging/Logger.h"
+#include "mcp/tools/BoundedAsyncResult.h"
 #include "mcp/tools/ThreadHelper.h"
 #include "python/PythonRunner.h"
 #include "services/markets/MarketDataService.h"
@@ -49,23 +50,29 @@ std::vector<ToolDef> get_markets_tools() {
                 return ToolResult::fail("Missing 'symbol'");
 
             auto* svc = &services::MarketDataService::instance();
-            bool ok = false;
-            services::QuoteData q;
-            detail::run_async_wait(svc, [svc, symbol, &ok, &q](auto signal_done) {
-                svc->fetch_quotes({symbol},
-                                  [&ok, &q, symbol, signal_done](bool success, QVector<services::QuoteData> quotes) {
-                                      if (success) {
-                                          for (const auto& candidate : quotes) {
-                                              if (candidate.symbol.compare(symbol, Qt::CaseInsensitive) == 0) {
-                                                  q = candidate;
-                                                  ok = true;
-                                                  break;
-                                              }
-                                          }
-                                      }
-                                      signal_done();
-                                  });
+            // The service callback can arrive after run_async_wait's 120s
+            // deadline. Keep the result on the heap and seal it on return,
+            // rather than writing to already-destroyed stack locals.
+            auto state = std::make_shared<detail::BoundedAsyncResult<services::QuoteData>>();
+            detail::run_async_wait(svc, [svc, symbol, state](auto signal_done) {
+                svc->fetch_quotes(
+                    {symbol}, [state, symbol, signal_done](bool success, QVector<services::QuoteData> quotes) {
+                        services::QuoteData matched;
+                        bool found = false;
+                        if (success) {
+                            for (const auto& candidate : quotes) {
+                                if (candidate.symbol.compare(symbol, Qt::CaseInsensitive) == 0) {
+                                    matched = candidate;
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                        state->complete(found, std::move(matched));
+                        signal_done();
+                    });
             });
+            auto [ok, q] = state->take();
 
             if (!ok) {
                 LOG_WARN(TAG, "fetch_quotes returned no data for " + symbol);
@@ -242,16 +249,16 @@ std::vector<ToolDef> get_markets_tools() {
                 interval = "1d";
 
             auto* svc = &services::MarketDataService::instance();
-            bool ok = false;
-            QVector<services::HistoryPoint> points;
-            detail::run_async_wait(svc, [svc, symbol, period, interval, &ok, &points](auto signal_done) {
-                svc->fetch_history(symbol, period, interval,
-                                   [&ok, &points, signal_done](bool success, QVector<services::HistoryPoint> result) {
-                                       ok = success;
-                                       points = std::move(result);
-                                       signal_done();
-                                   });
+            auto state = std::make_shared<detail::BoundedAsyncResult<QVector<services::HistoryPoint>>>();
+            detail::run_async_wait(svc, [svc, symbol, period, interval, state](auto signal_done) {
+                svc->fetch_history(
+                    symbol, period, interval,
+                    [state, signal_done](bool success, QVector<services::HistoryPoint> result) {
+                        state->complete(success, std::move(result));
+                        signal_done();
+                    });
             });
+            auto [ok, points] = state->take();
 
             if (!ok) {
                 LOG_WARN(TAG, QString("fetch_history failed for %1 (%2/%3)").arg(symbol, period, interval));

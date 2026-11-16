@@ -88,6 +88,11 @@ std::vector<ToolDef> get_markets_tools() {
                                               : QJsonValue(q.local_received_at_utc)},
                 {"market_as_of_utc", QJsonValue(QJsonValue::Null)},
                 {"market_as_of_verified", services::quote_market_asof_verified(q.delivery_origin)},
+                // Without an authenticated exchange as-of and a trusted clock,
+                // a 30s SQLite TTL cannot certify price age or market freshness.
+                {"market_age_seconds", QJsonValue(QJsonValue::Null)},
+                {"freshness_verified", false},
+                {"receipt_clock_verified", false},
                 {"execution_eligible", services::quote_execution_eligible(q.delivery_origin)},
                 {"scientific_claim", false},
             };

@@ -99,10 +99,15 @@ def _get_ta():
 def _ensure_ohlcv(df: pd.DataFrame) -> pd.DataFrame:
     """Ensure DataFrame has required OHLCV columns (lowercase)."""
     col_map = {}
+    normalized = []
     for c in df.columns:
-        cl = c.lower()
-        if cl in ('open', 'high', 'low', 'close', 'volume'):
+        cl = c.lower() if isinstance(c, str) else c
+        normalized.append(cl if isinstance(cl, str) and cl in ('open', 'high', 'low', 'close', 'volume') else c)
+        if isinstance(cl, str) and cl in ('open', 'high', 'low', 'close', 'volume'):
             col_map[c] = cl
+    ohlcv_labels = [c for c in normalized if isinstance(c, str) and c in ("open", "high", "low", "close", "volume")]
+    if len(set(ohlcv_labels)) != len(ohlcv_labels):
+        raise ValueError("Ambiguous OHLCV columns after normalization")
     if col_map:
         df = df.rename(columns=col_map)
     return df

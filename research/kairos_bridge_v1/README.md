@@ -134,6 +134,36 @@ scientific predictive merit, KAIROS tool dispatch, native fork CI,
 broker access and deployment are **NOT VERIFIED**. This is not a trading
 gateway, validated strategy or authorization to run a live or demo order.
 
+## 2026-11-16 — descendant pipe lifetime: source-real POSIX regression
+
+**Test-only increment in the existing DRAFT #25; no change to the sidecar
+logic, installed app, dependency chain or trading authority.** At exact
+published PR code+test commit `f620242992848bc654a1ec9de9921fc2fa0d748b`
+the new source-pinned
+`tests/fincept_kairos_bridge/test_bounded_descendants.py` has Git blob
+`560dadb58de885ea63c79a1b77f01f2ab8492087`; the unchanged
+`sidecar.py` blob remains `b8070312dec300b8e7a2b24913c178b33b91ca99`.
+
+The regression starts an **actual** private POSIX process group in an
+isolated Mac checkout and covers two cases: (1) the direct parent exits
+successfully while its descendant keeps the captured pipe descriptors open;
+the sidecar raises `PINNED_TOOL_UNAVAILABLE_OR_TIMEOUT`, then kills the
+descendant before it can write a delayed completion sentinel, and a start
+sentinel independently proves the child ran; (2) a short-lived descendant
+finishes normally, closes the inherited pipes and returns valid stdout
+without a spurious timeout. No broker, GUI, network or user profile.
+
+**Exact post-publication remote worktree** checked out from GitHub at
+`f620242992848bc654a1ec9de9921fc2fa0d748b`, clean git status;
+macOS 14.5 / Python 3.12.9,
+`python3.12 -m unittest discover -s tests/fincept_kairos_bridge -v`:
+**15/15 PASS** (the previous 13 tests plus 2 real POSIX descendant tests).
+Log SHA-256 `584d70cae6782ddc22de2b54907a5da4a5564f0c0c3c129d6df46d98a977262a`.
+No native GitHub Actions were returned by the Fincept fork for this
+revision (**NOT VERIFIED**), nor does this result prove portability to
+Windows or full Fincept Qt lifecycle. Reviewer should still assess
+process-group cleanup and dependency isolation independently before merge.
+
 ## Safe interpretation / next steps
 
 The JSON is not a market observation, data entitlement, scientific

@@ -48,3 +48,18 @@ Five deterministic in-memory SQLite tests now extract the **literal original** `
 Three explicit MCP response fields are added to prevent a KAIROS LLM consumer from conflating local receipt or cache TTL with trustworthy market freshness: `market_age_seconds=null`, `freshness_verified=false`, `receipt_clock_verified=false`. No clock trust or external exchange timestamp was fabricated. The two corresponding source-contract assertions were demonstrated **RED** before the implementation, then must be verified GREEN with the full offline suite.
 
 This incremental evidence does not create an IG session, use live market data, authorize execution or establish any scientific edge. Full Qt6 compilation and provider-as-of contracts remain blockers.
+
+## 2026-11-16 — Original Qt6 changed translation-unit compilation (F0/F1 checkpoint)
+
+**VERIFIED:** a disposable `debian:trixie` Docker container on the authorized ZimaBlade host was provisioned with Debian Qt **6.8.2**, GNU g++ **14**, pkg-config and Qt6 Core/Network/Widgets/Sql/Concurrent development headers. This is the same **6.8 minor line**, but **NOT exact project patch 6.8.3**. The public Git source was sparsely cloned at exact pre-amendment PR SHA `2a0533021ff42b981c5594b594f818f5100390e2` and copied to the container. The container was disconnected from its Docker bridge network **before** compilation and capped at 2 vCPU/4 GiB; it had no host/KAIROS/IG credentials or privileged mounts.
+
+**Both original changed Qt C++20 translation units compiled to real object files (not just syntax-only):**
+
+- `fincept-qt/src/services/markets/MarketDataService.cpp` → `MarketDataService.o` (~1.6 MiB), **GCC14 exit 0**.
+- `fincept-qt/src/mcp/tools/MarketsTools.cpp` → `MarketsTools.o` (~672 KiB), **GCC14 exit 0**.
+
+Compiler flags include `-std=c++20 -O0 -fPIC`, original `fincept-qt/src` and `fincept-qt/include` include roots, and cflags obtained through `pkg-config Qt6Core Qt6Network Qt6Widgets Qt6Sql Qt6Concurrent`. The original versioned code compiled with the Qt dev SDK. This confirms the modified quote-service and MCP implementation translation units are **Qt/C++ compileable** on that SDK, an advance over earlier standalone native-only tests.
+
+**New reproducible opt-in smoke test:** `tests/fincept_original/test_qt6_market_original_compile.py` compiles each original translation unit to an object in a temporary directory. Run with `FINCEPT_QT_COMPILE_REQUIRED=1 python3 -m unittest discover -s tests/fincept_original -p 'test_qt6_market_original_compile.py' -v` in an isolated Qt6.8 development environment. With required mode on, an absent/incompatible SDK **fails** instead of presenting a false green; without required mode it is explicitly **SKIPPED**. On the iMac without Qt6 headers, both behaviors were directly checked.
+
+**NOT VERIFIED / STILL BLOCKED:** complete Fincept `FinceptTerminal` CMake configure/link/build, Qt6 moc/linker and plugin packaging, runtime GUI screens with this changed binary, signal delivery/event-loop integration, provider exchange as-of, authoritative time/freshness, IG accounts, KAIROS authenticated tool integration, order/trading execution, and exact Qt 6.8.3. The QEMU Debian GUI smoke used a **different previously installed binary** and cannot be counted as a test of these source changes. Fork GitHub Actions remain disabled; no setting or runner was changed. Keep PR in DRAFT.

@@ -20,6 +20,34 @@
 
 namespace fincept::services {
 
+namespace {
+
+// This key is local receipt-time evidence, NOT a provider/exchange as-of.
+// Legacy caches lack the key and must remain explicitly unverified.
+constexpr const char* kQuoteLocalReceiptKey = "_fincept_local_received_at_utc";
+
+QuoteData read_cached_quote(const QJsonObject& o, QuoteDeliveryOrigin path) {
+    QuoteData quote{o["symbol"].toString(), o["name"].toString(), o["price"].toDouble(),
+                    o["change"].toDouble(), o["change_pct"].toDouble(), o["high"].toDouble(),
+                    o["low"].toDouble(), o["volume"].toDouble()};
+    quote.delivery_origin = path;
+    quote.local_received_at_utc = o.value(kQuoteLocalReceiptKey).toString();
+    return quote;
+}
+
+void store_quote_in_cache(const QuoteData& quote, int ttl_seconds) {
+    QJsonObject o{{"symbol", quote.symbol}, {"name", quote.name}, {"price", quote.price},
+                  {"change", quote.change}, {"change_pct", quote.change_pct},
+                  {"high", quote.high}, {"low", quote.low}, {"volume", quote.volume},
+                  {kQuoteLocalReceiptKey, quote.local_received_at_utc}};
+    fincept::CacheManager::instance().put(
+        "market:" + quote.symbol,
+        QVariant(QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact))),
+        ttl_seconds, "market_data");
+}
+
+} // namespace
+
 MarketDataService& MarketDataService::instance() {
     static MarketDataService s;
     return s;
@@ -182,22 +210,11 @@ void MarketDataService::refresh(const QStringList& topics) {
                              q["high"].toDouble(),
                              q["low"].toDouble(),
                              q["volume"].toDouble()};
+                qd.delivery_origin = QuoteDeliveryOrigin::ProviderResponse;
+                qd.local_received_at_utc = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
 
-                // Cache write — mirrors store_quote() in flush_batch.
-                QJsonObject co;
-                co["symbol"] = qd.symbol;
-                co["name"] = qd.name;
-                co["price"] = qd.price;
-                co["change"] = qd.change;
-                co["change_pct"] = qd.change_pct;
-                co["high"] = qd.high;
-                co["low"] = qd.low;
-                co["volume"] = qd.volume;
-                fincept::CacheManager::instance().put(
-                    "market:" + qd.symbol,
-                    QVariant(QString::fromUtf8(QJsonDocument(co).toJson(QJsonDocument::Compact))), kQuoteCacheTtlSec,
-                    "market_data");
-
+                // Shared encoding for both DataHub batch_all and MCP batch_quotes.
+                store_quote_in_cache(qd, kQuoteCacheTtlSec);
                 self->publish_quote_to_hub(qd);
                 ++quotes_ok;
             }
@@ -363,9 +380,7 @@ void MarketDataService::fetch_quotes(const QStringList& symbols, QuoteCallback c
         const QVariant cv = fincept::CacheManager::instance().get("market:" + sym);
         if (!cv.isNull()) {
             const QJsonObject o = QJsonDocument::fromJson(cv.toString().toUtf8()).object();
-            cached_results.append({o["symbol"].toString(), o["name"].toString(), o["price"].toDouble(),
-                                   o["change"].toDouble(), o["change_pct"].toDouble(), o["high"].toDouble(),
-                                   o["low"].toDouble(), o["volume"].toDouble()});
+            cached_results.append(read_cached_quote(o, QuoteDeliveryOrigin::UnexpiredCacheHit));
         } else {
             all_cached = false;
             break;
@@ -419,30 +434,17 @@ void MarketDataService::flush_batch() {
                 auto doc = QJsonDocument::fromJson(result.output.toUtf8());
 
                 auto parse_quote = [](const QJsonObject& q) -> QuoteData {
-                    return {q["symbol"].toString(),
-                            q["name"].toString(q["symbol"].toString()),
-                            q["price"].toDouble(),
-                            q["change"].toDouble(),
-                            q["change_percent"].toDouble(),
-                            q["high"].toDouble(),
-                            q["low"].toDouble(),
-                            q["volume"].toDouble()};
-                };
-
-                auto store_quote = [](const QuoteData& q) {
-                    QJsonObject o;
-                    o["symbol"] = q.symbol;
-                    o["name"] = q.name;
-                    o["price"] = q.price;
-                    o["change"] = q.change;
-                    o["change_pct"] = q.change_pct;
-                    o["high"] = q.high;
-                    o["low"] = q.low;
-                    o["volume"] = q.volume;
-                    fincept::CacheManager::instance().put(
-                        "market:" + q.symbol,
-                        QVariant(QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact))), kQuoteCacheTtlSec,
-                        "market_data");
+                    QuoteData quote{q["symbol"].toString(),
+                                    q["name"].toString(q["symbol"].toString()),
+                                    q["price"].toDouble(),
+                                    q["change"].toDouble(),
+                                    q["change_percent"].toDouble(),
+                                    q["high"].toDouble(),
+                                    q["low"].toDouble(),
+                                    q["volume"].toDouble()};
+                    quote.delivery_origin = QuoteDeliveryOrigin::ProviderResponse;
+                    quote.local_received_at_utc = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
+                    return quote;
                 };
 
                 if (doc.isArray()) {
@@ -452,7 +454,7 @@ void MarketDataService::flush_batch() {
                             continue;
                         auto quote = parse_quote(q);
                         all_quotes.append(quote);
-                        store_quote(quote);
+                        store_quote_in_cache(quote, kQuoteCacheTtlSec);
                         publish_quote_to_hub(quote);
                     }
                 } else if (doc.isObject()) {
@@ -460,7 +462,7 @@ void MarketDataService::flush_batch() {
                     if (obj.contains("symbol") && !obj.contains("error")) {
                         auto quote = parse_quote(obj);
                         all_quotes.append(quote);
-                        store_quote(quote);
+                        store_quote_in_cache(quote, kQuoteCacheTtlSec);
                         publish_quote_to_hub(quote);
                     }
                 }
@@ -473,15 +475,14 @@ void MarketDataService::flush_batch() {
             // Fan out results to each waiting callback, filtered to their requested symbols
             for (const auto& req : requests) {
                 if (!result.success) {
-                    // On failure, try to serve from stale cache (ignoring TTL)
+                    // On provider failure, try only still-unexpired cache
+                    // entries: CacheManager::get() already enforces TTL.
                     QVector<QuoteData> stale;
                     for (const auto& sym : req.symbols) {
                         const QVariant cv = fincept::CacheManager::instance().get("market:" + sym);
                         if (!cv.isNull()) {
                             const QJsonObject o = QJsonDocument::fromJson(cv.toString().toUtf8()).object();
-                            stale.append({o["symbol"].toString(), o["name"].toString(), o["price"].toDouble(),
-                                          o["change"].toDouble(), o["change_pct"].toDouble(), o["high"].toDouble(),
-                                          o["low"].toDouble(), o["volume"].toDouble()});
+                            stale.append(read_cached_quote(o, QuoteDeliveryOrigin::ProviderFailureCacheHit));
                         }
                     }
                     req.cb(!stale.isEmpty(), stale);

@@ -1,5 +1,6 @@
 #pragma once
 #include "core/result/Result.h"
+#include "services/markets/QuoteDeliveryEvidence.h"
 #include "datahub/Producer.h"
 
 #include <QJsonArray>
@@ -22,6 +23,11 @@ struct QuoteData {
     double high = 0;
     double low = 0;
     double volume = 0;
+
+    // Read-only delivery evidence; NOT exchange timestamp or proof of price
+    // freshness. Aggregate initializers across existing widgets stay valid.
+    QuoteDeliveryOrigin delivery_origin = QuoteDeliveryOrigin::Unknown;
+    QString local_received_at_utc; // local clock on successful provider response
 };
 
 struct InfoData {

@@ -11,6 +11,9 @@
 
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QFileInfo>
+#include <QProcess>
+#include <QProcessEnvironment>
 #include <QHash>
 #include <QHostAddress>
 #include <QJsonArray>
@@ -391,6 +394,48 @@ int run_mcp_server_selftest() {
                 }
                 rep.check(no_authority,
                           QStringLiteral("real get_quote denies clock, freshness, science and execution authority"));
+
+                // Opt-in cross-process test: execute the independently
+                // maintained KAIROS Python MCP client while THIS original
+                // Fincept HTTP server is listening. No test configuration =
+                // no child process. The cache preflight above MUST succeed
+                // before enabling a request, so no provider fallback occurs.
+                const QString qa_script = qEnvironmentVariable("FINCEPT_KAIROS_QA_CLIENT_SCRIPT");
+                const QString qa_python = qEnvironmentVariable("FINCEPT_KAIROS_QA_PYTHON");
+                if (!qa_script.isEmpty() || !qa_python.isEmpty()) {
+                    const QFileInfo script_file(qa_script);
+                    const QFileInfo python_file(qa_python);
+                    if (!script_file.isAbsolute() || !script_file.isFile() ||
+                        !python_file.isAbsolute() || !python_file.isExecutable()) {
+                        rep.check(false, QStringLiteral("external KAIROS client paths require explicit absolute files"));
+                    } else {
+                        QProcess child;
+                        QProcessEnvironment clean;
+                        clean.insert(QStringLiteral("HOME"), qEnvironmentVariable("HOME"));
+                        clean.insert(QStringLiteral("TMPDIR"), qEnvironmentVariable("TMPDIR"));
+                        clean.insert(QStringLiteral("PATH"), QStringLiteral("/usr/bin:/bin:/usr/local/bin:/opt/local/bin"));
+                        clean.insert(QStringLiteral("PYTHONDONTWRITEBYTECODE"), QStringLiteral("1"));
+                        clean.insert(QStringLiteral("KAIROS_QA_MCP_PORT"), QString::number(port));
+                        // This is a one-process, random, selftest-only token,
+                        // never the user's stored Fincept/Broker credentials.
+                        clean.insert(QStringLiteral("KAIROS_QA_MCP_TEST_TOKEN"), token);
+                        child.setProcessEnvironment(clean);
+                        child.setProgram(qa_python);
+                        child.setArguments({qa_script, QStringLiteral("--client-probe")});
+                        child.start();
+                        const bool completed = pump_until(
+                            [&child]() { return child.state() == QProcess::NotRunning; }, 20000);
+                        if (!completed) {
+                            child.kill();
+                            child.waitForFinished(2000);
+                        }
+                        const QByteArray evidence = child.readAllStandardOutput();
+                        rep.check(completed && child.exitStatus() == QProcess::NormalExit &&
+                                      child.exitCode() == 0 &&
+                                      evidence.contains("KAIROS_ORIGINAL_FINCEPT_MCP_CLIENT_PASS"),
+                                  QStringLiteral("external KAIROS Python client authenticated to real Fincept MCP"));
+                    }
+                }
             } else {
                 rep.check(false, QStringLiteral("real quote MCP test refused: cannot seed cache"));
             }

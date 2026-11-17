@@ -108,3 +108,66 @@ con dati sintetici e una tokenizzazione test-only in ascolto su
 loopback; sviluppare successivamente una fixture isolata per
 `get_history` senza chiamare il runner provider. L'integrazione
 multi-host autenticata e Fincept headless/Linux restano gate futuri.
+
+
+## 2026-11-17 — External original-server KAIROS client QA (companion #655)
+
+This PR now optionally launches the **actual independent KAIROS Python MCP
+client** from [KAIROS DRAFT #655](https://github.com/cometarossa/multi-asset-trading-system-hermes-autonomy/pull/655) **while the real Fincept Qt MCP HTTP server is serving requests**.
+
+The original test remains entirely unchanged for operators who do not set
+the two explicit test-only environment variables:
+
+- `FINCEPT_KAIROS_QA_CLIENT_SCRIPT`: absolute path to the external
+  KAIROS `tests/test_fincept_original_mcp_crossprocess_v1.py`;
+- `FINCEPT_KAIROS_QA_PYTHON`: absolute path to the Python interpreter.
+
+The original C++ selftest runs a child process **only after**
+`market:KAIROSQA` has been seeded and read back exactly from the real
+SQLite cache. If the seed fails, it **never runs the external probe nor
+calls `get_quote`**. Invalid or incomplete test-executable paths fail
+the requested QA explicitly.
+
+The child inherits **only** a new restricted environment containing
+a temporary HOME/TMPDIR, a standard executable PATH,
+`PYTHONDONTWRITEBYTECODE=1`, and the per-test ephemeral loopback
+port and random selftest Bearer token (`KAIROS_QA_MCP_PORT`,
+`KAIROS_QA_MCP_TEST_TOKEN`). It does NOT inherit user Fincept login,
+keychain, provider, broker or market tokens from the parent process.
+Neither the token nor the quote/provider responses are printed.
+The original Qt event loop remains pumped while the Python client is
+running. The child has a 20-second execution watchdog and is killed
+on timeout. Errors fail the selftest without a retry or trade.
+
+The standalone KAIROS client verifies real `initialize`,
+`notifications/initialized`, and `tools/call get_quote` with
+strict metadata/provenance checks, denies `live_get_quote` before I/O,
+and checks that Fincept's actual HTTP server rejects an invalid
+test Bearer token. The matching Fincept native assertion requires
+the exact `KAIROS_ORIGINAL_FINCEPT_MCP_CLIENT_PASS` marker and a
+zero child exit code. This proves an actual cross-process C++/Python
+protocol integration, not only an internal Qt server selftest.
+
+**Native Qt 6.8.3 (AppleClang16) evidence:** incremental MOC,
+`McpServerSelfTest.cpp` compile and final link **3/3 PASS**.
+The changed unsigned lab binary SHA256 is
+`7b7f5625bc68dbd614f478b49d595f7cd4278d1e024eddfe9845af3d3397834d`.
+KAIROS opt-in external Python unittest passed **1/1** including
+original C++ selftest **47/47**; the test runs in a fresh temporary
+HOME/XDG profile under macOS Seatbelt with all external network
+denied and localhost only allowed, verified by an `EPERM` socket
+preflight. The default Fincept MCP selftest **without opt-in**
+remains **46/46**. One prior wrapper run failed only its Python
+loopback-bind preflight with `EPERM`: the same macOS Seatbelt profile
+can refuse a local `AF_INET` bind to the Python diagnostic binary even
+while the actual Qt MCP server can successfully bind on localhost. The
+wrapper now requires the Python preflight to attest **outbound external
+socket denial** with `EPERM`, while the independently run original Qt
+MCP selftest itself proves **positive loopback bind/connect**. It does
+**not** expand the sandbox's network permissions.
+
+Still **not verified/authorized**: `get_history` synthetic fixture,
+the production KAIROS adapter, real providers, encrypted remote bridge,
+Linux headless, data freshness, scientific edge, IG session, or broker
+orders. PR #58 depends on unmerged #56; PR #57 is a separate
+unmerged build-pin fix. No merge/deploy or authority expansion.

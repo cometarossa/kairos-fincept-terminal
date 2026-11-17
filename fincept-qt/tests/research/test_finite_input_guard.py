@@ -69,6 +69,24 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(x.indicator.samples, 2)
         self.assertEqual(x.indicator.current.value, 15)
 
+    def test_rejection_after_warmup_preserves_future_outputs(self):
+        # Exercise the fully initialized state, not only the warm-up path.
+        for factory in (mod.SimpleMovingAverage, mod.ExponentialMovingAverage, mod.RelativeStrengthIndex):
+            with self.subTest(indicator=factory.__name__):
+                baseline = factory(period=3)
+                guarded = FiniteInputGuard(factory(period=3))
+                for value in (10, 12, 11, 15, 13):
+                    baseline.update(value)
+                    guarded.update(value)
+                for bad in (float("nan"), float("inf"), "invalid", False):
+                    with self.assertRaises(ValueError):
+                        guarded.update(bad)
+                for value in (17, 16, 20, 18):
+                    baseline.update(value)
+                    guarded.update(value)
+                    self.assertEqual(guarded.indicator.samples, baseline.samples)
+                    self.assertEqual(guarded.indicator.current.value, baseline.current.value)
+
     def test_ema_rsi_recovery_matches_uninterrupted_original(self):
         # A rejected observation must not change any future indicator output.
         for factory in (mod.ExponentialMovingAverage, mod.RelativeStrengthIndex):

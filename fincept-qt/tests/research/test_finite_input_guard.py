@@ -38,6 +38,28 @@ class FiniteInputGuard:
             raise ValueError("indicator input must be finite")
         return self.indicator.update(value)
 
+class FiniteOutputBoundary:
+    """Research-only result gate: never expose nonfinite values to a consumer.
+
+    This is a read-only output boundary, NOT a transactional indicator update.
+    The original engine may already have advanced its internal state.
+    """
+    def __init__(self, indicator):
+        self.indicator = FiniteInputGuard(indicator)
+
+    def update(self, value):
+        self.indicator.update(value)
+        result = self.indicator.indicator.current.value
+        if isinstance(result, bool) or not isinstance(result, (int, float)):
+            raise ValueError("indicator output is not a finite numeric result")
+        try:
+            valid = math.isfinite(result)
+        except (ValueError, TypeError, OverflowError):
+            valid = False
+        if not valid:
+            raise ValueError("indicator output is nonfinite; consumer must abstain")
+        return result
+
 class GuardTests(unittest.TestCase):
     def test_denied_input_never_invokes_original_engine(self):
         # Boundary denial must precede every original update() call.
@@ -136,6 +158,19 @@ class GuardTests(unittest.TestCase):
                         guarded.update(float("nan"))
                     self.assertEqual(guarded.indicator.samples, baseline.samples)
                     self.assertEqual(guarded.indicator.current.value, baseline.current.value)
+
+    def test_output_boundary_denies_overflow_and_preserves_valid_result(self):
+        baseline = mod.SimpleMovingAverage(period=3)
+        boundary = FiniteOutputBoundary(mod.SimpleMovingAverage(period=3))
+        for value in (10, 20, 30):
+            baseline.update(value)
+            self.assertEqual(boundary.update(value), baseline.current.value)
+        overflowing = FiniteOutputBoundary(mod.SimpleMovingAverage(period=3))
+        overflowing.update(1e308)
+        with self.assertRaisesRegex(ValueError, "consumer must abstain"):
+            overflowing.update(1e308)
+        # The original engine has advanced: do not claim rollback/atomicity.
+        self.assertTrue(math.isinf(overflowing.indicator.indicator.current.value))
 
     def test_finite_inputs_can_overflow_original_sma_output(self):
         # Known limitation / reproduced defect, NOT a safety PASS:

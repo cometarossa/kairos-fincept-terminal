@@ -135,7 +135,15 @@ print('LOOPBACK_ONLY_EXTERNAL_DENIED')
                 )
                 self.assertEqual(p.returncode, 0, f"{flag} failed:\n{p.stdout[-1800:]}")
                 if flag == "--selftest-mcp-server":
-                    self.assertIn("41 passed, 0 failed", p.stdout)
+                    self.assertIn("46 passed, 0 failed", p.stdout)
+                    for required in (
+                        "synthetic quote test cache database is open",
+                        "synthetic quote was seeded without provider calls",
+                        "real get_quote MCP handler returns cached synthetic quote",
+                        "real get_quote preserves local receipt; market as-of remains unknown",
+                        "real get_quote denies clock, freshness, science and execution authority",
+                    ):
+                        self.assertIn("[PASS] " + required, p.stdout)
                 elif flag == "--selftest-tools":
                     self.assertIn("VERDICT: PASS", p.stdout)
 

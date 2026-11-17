@@ -6,6 +6,8 @@
 #include "mcp/McpProvider.h"
 #include "mcp/server/EssentialTools.h"
 #include "mcp/server/McpHttpServer.h"
+#include "storage/cache/CacheManager.h"
+#include "storage/sqlite/CacheDatabase.h"
 
 #include <QElapsedTimer>
 #include <QEventLoop>
@@ -339,6 +341,61 @@ int run_mcp_server_selftest() {
         rep.check(!res.value(QStringLiteral("isError")).toBool(true) && !first_text(res).isEmpty() &&
                       res.value(QStringLiteral("structuredContent")).toObject().contains(QStringLiteral("tools")),
                   QStringLiteral("tools/call tool_list returns content + structuredContent"), clip(first_text(res)));
+    }
+    // ── F1: real get_quote handler, synthetic ONLY in the isolated SQLite cache ──
+    // The original MarketDataService reads a valid cache hit synchronously,
+    // before reaching yfinance_data.py. NEVER call get_quote if seeding failed:
+    // that would otherwise dispatch to an external provider.
+    {
+        const QString symbol = QStringLiteral("KAIROSQA");
+        const QString key = QStringLiteral("market:") + symbol;
+        const QString receipt = QStringLiteral("2000-01-01T00:00:00.000Z");
+        const QJsonObject fixture{{"symbol", symbol}, {"name", "SYNTHETIC - NOT MARKET DATA"},
+                                  {"price", 111.5}, {"change", 1.0}, {"change_pct", 0.91},
+                                  {"high", 114.0}, {"low", 110.0}, {"volume", 1000.0},
+                                  {"_fincept_local_received_at_utc", receipt}};
+        const QString payload = QString::fromUtf8(QJsonDocument(fixture).toJson(QJsonDocument::Compact));
+        auto& cache = fincept::CacheManager::instance();
+        const bool cache_open = fincept::CacheDatabase::instance().is_open();
+        rep.check(cache_open, QStringLiteral("synthetic quote test cache database is open"));
+        if (cache_open) {
+            cache.put(key, payload, 30, QStringLiteral("mcp_selftest_synthetic"));
+            const bool cache_seeded = cache.get(key).toString() == payload;
+            rep.check(cache_seeded, QStringLiteral("synthetic quote was seeded without provider calls"));
+            if (cache_seeded) {
+                const QJsonObject result = call_tool(port, token, QStringLiteral("get_quote"),
+                                                     {{"symbol", symbol}}, 50)
+                                               .value(QStringLiteral("result")).toObject();
+                const QJsonObject data = result.value(QStringLiteral("structuredContent")).toObject();
+                const QJsonObject provenance = data.value(QStringLiteral("quote_provenance")).toObject();
+                rep.check(!result.value(QStringLiteral("isError")).toBool(true) &&
+                              data.value(QStringLiteral("symbol")).toString() == symbol &&
+                              data.value(QStringLiteral("price")).toDouble() == 111.5,
+                          QStringLiteral("real get_quote MCP handler returns cached synthetic quote"));
+                rep.check(provenance.value(QStringLiteral("delivery_origin")).toString() ==
+                                  QLatin1String("unexpired_cache_hit") &&
+                              provenance.value(QStringLiteral("local_received_at_utc")).toString() == receipt &&
+                              provenance.contains(QStringLiteral("market_as_of_utc")) &&
+                              provenance.value(QStringLiteral("market_as_of_utc")).isNull() &&
+                              provenance.contains(QStringLiteral("market_age_seconds")) &&
+                              provenance.value(QStringLiteral("market_age_seconds")).isNull(),
+                          QStringLiteral("real get_quote preserves local receipt; market as-of remains unknown"));
+                bool no_authority = true;
+                for (const QString& field : {QStringLiteral("market_as_of_verified"),
+                                             QStringLiteral("freshness_verified"),
+                                             QStringLiteral("receipt_clock_verified"),
+                                             QStringLiteral("execution_eligible"),
+                                             QStringLiteral("scientific_claim")}) {
+                    if (!provenance.contains(field) || provenance.value(field).toBool(true))
+                        no_authority = false;
+                }
+                rep.check(no_authority,
+                          QStringLiteral("real get_quote denies clock, freshness, science and execution authority"));
+            } else {
+                rep.check(false, QStringLiteral("real quote MCP test refused: cannot seed cache"));
+            }
+            cache.remove(key);
+        }
     }
     if (!destructive_tool.isEmpty()) {
         const QString advertised = McpHttpServer::advertised_name(destructive_tool);

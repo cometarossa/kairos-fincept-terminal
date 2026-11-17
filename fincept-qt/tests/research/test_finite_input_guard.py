@@ -87,6 +87,24 @@ class GuardTests(unittest.TestCase):
                     self.assertEqual(guarded.indicator.samples, baseline.samples)
                     self.assertEqual(guarded.indicator.current.value, baseline.current.value)
 
+    def test_huge_integer_overflow_rejected_without_state_mutation(self):
+        # math.isfinite() raises OverflowError for integers too large for float.
+        # The boundary must fail closed without advancing the original engine.
+        huge = 10 ** 1000
+        for factory in (mod.SimpleMovingAverage, mod.ExponentialMovingAverage, mod.RelativeStrengthIndex):
+            with self.subTest(indicator=factory.__name__):
+                guarded = FiniteInputGuard(factory(period=3))
+                baseline = factory(period=3)
+                for value in (10, 12, 11, 15):
+                    guarded.update(value)
+                    baseline.update(value)
+                with self.assertRaises(ValueError):
+                    guarded.update(huge)
+                self.assertEqual(guarded.indicator.samples, baseline.samples)
+                guarded.update(17)
+                baseline.update(17)
+                self.assertEqual(guarded.indicator.current.value, baseline.current.value)
+
     def test_ema_rsi_recovery_matches_uninterrupted_original(self):
         # A rejected observation must not change any future indicator output.
         for factory in (mod.ExponentialMovingAverage, mod.RelativeStrengthIndex):

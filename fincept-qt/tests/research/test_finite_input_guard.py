@@ -46,17 +46,27 @@ class FiniteOutputBoundary:
     """
     def __init__(self, indicator):
         self.indicator = FiniteInputGuard(indicator)
+        self.invalidated = False
 
     def update(self, value):
-        self.indicator.update(value)
+        if self.invalidated:
+            raise RuntimeError("indicator instance invalidated; create a fresh instance")
+        try:
+            self.indicator.update(value)
+        except Exception:
+            # Original update may have mutated state before raising.
+            self.invalidated = True
+            raise
         result = self.indicator.indicator.current.value
         if isinstance(result, bool) or not isinstance(result, (int, float)):
+            self.invalidated = True
             raise ValueError("indicator output is not a finite numeric result")
         try:
             valid = math.isfinite(result)
         except (ValueError, TypeError, OverflowError):
             valid = False
         if not valid:
+            self.invalidated = True
             raise ValueError("indicator output is nonfinite; consumer must abstain")
         return result
 
@@ -171,6 +181,20 @@ class GuardTests(unittest.TestCase):
             overflowing.update(1e308)
         # The original engine has advanced: do not claim rollback/atomicity.
         self.assertTrue(math.isinf(overflowing.indicator.indicator.current.value))
+
+    def test_nonfinite_output_invalidates_instance_and_denies_reuse(self):
+        boundary = FiniteOutputBoundary(mod.SimpleMovingAverage(period=3))
+        boundary.update(1e308)
+        with self.assertRaisesRegex(ValueError, "consumer must abstain"):
+            boundary.update(1e308)
+        self.assertTrue(boundary.invalidated)
+        samples = boundary.indicator.indicator.samples
+        with self.assertRaisesRegex(RuntimeError, "instance invalidated"):
+            boundary.update(10)
+        self.assertEqual(boundary.indicator.indicator.samples, samples)
+        # A fresh original instance can still be used independently.
+        fresh = FiniteOutputBoundary(mod.SimpleMovingAverage(period=3))
+        self.assertEqual(fresh.update(10), 10)
 
     def test_finite_inputs_can_overflow_original_sma_output(self):
         # Known limitation / reproduced defect, NOT a safety PASS:

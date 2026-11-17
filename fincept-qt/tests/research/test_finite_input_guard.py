@@ -196,6 +196,27 @@ class GuardTests(unittest.TestCase):
         fresh = FiniteOutputBoundary(mod.SimpleMovingAverage(period=3))
         self.assertEqual(fresh.update(10), 10)
 
+    def test_original_update_exception_invalidates_boundary_and_denies_reuse(self):
+        # Synthetic fault injection: an original engine can mutate before raising.
+        class MutatingThenRaisingIndicator:
+            def __init__(self):
+                self.samples = 0
+                self.current = type("Current", (), {"value": 0})()
+            def update(self, value):
+                self.samples += 1
+                raise ArithmeticError("synthetic engine failure after mutation")
+
+        original = MutatingThenRaisingIndicator()
+        boundary = FiniteOutputBoundary(original)
+        with self.assertRaisesRegex(ArithmeticError, "synthetic engine failure"):
+            boundary.update(10)
+        self.assertTrue(boundary.invalidated)
+        self.assertEqual(original.samples, 1)
+        with self.assertRaisesRegex(RuntimeError, "instance invalidated"):
+            boundary.update(20)
+        self.assertEqual(original.samples, 1)
+        # No rollback or scientific PASS is claimed for the mutated engine.
+
     def test_finite_inputs_can_overflow_original_sma_output(self):
         # Known limitation / reproduced defect, NOT a safety PASS:
         # input validation alone cannot guarantee finite derived outputs.

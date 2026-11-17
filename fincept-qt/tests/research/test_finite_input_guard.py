@@ -39,6 +39,24 @@ class FiniteInputGuard:
         return self.indicator.update(value)
 
 class GuardTests(unittest.TestCase):
+    def test_denied_input_never_invokes_original_engine(self):
+        # Boundary denial must precede every original update() call.
+        class SpyIndicator:
+            def __init__(self):
+                self.calls = []
+            def update(self, value):
+                self.calls.append(value)
+                return "original-result"
+        spy = SpyIndicator()
+        guarded = FiniteInputGuard(spy)
+        for invalid in (None, True, "12", float("nan"), float("inf"), 10**1000):
+            with self.subTest(invalid=repr(invalid)[:40]):
+                with self.assertRaises(ValueError):
+                    guarded.update(invalid)
+                self.assertEqual(spy.calls, [])
+        self.assertEqual(guarded.update(12), "original-result")
+        self.assertEqual(spy.calls, [12])
+
     def test_original_sma_numeric_unchanged(self):
         original = mod.SimpleMovingAverage(period=3)
         guarded = FiniteInputGuard(mod.SimpleMovingAverage(period=3))

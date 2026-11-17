@@ -137,5 +137,14 @@ class GuardTests(unittest.TestCase):
                     self.assertEqual(guarded.indicator.samples, baseline.samples)
                     self.assertEqual(guarded.indicator.current.value, baseline.current.value)
 
+    def test_finite_inputs_can_overflow_original_sma_output(self):
+        # Known limitation / reproduced defect, NOT a safety PASS:
+        # input validation alone cannot guarantee finite derived outputs.
+        guarded = FiniteInputGuard(mod.SimpleMovingAverage(period=3))
+        for value in (1e308, 1e308, 1e308):
+            self.assertTrue(math.isfinite(value))
+            guarded.update(value)
+        self.assertTrue(math.isinf(guarded.indicator.current.value))
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

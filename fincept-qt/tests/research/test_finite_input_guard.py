@@ -50,26 +50,35 @@ class FiniteOutputBoundary:
     def __init__(self, indicator):
         self.indicator = FiniteInputGuard(indicator)
         self.invalidated = False
+        self.failure_code = None
 
     def update(self, value):
         if self.invalidated:
             raise RuntimeError("indicator instance invalidated; create a fresh instance")
         # Input denial is pre-mutation; it must not poison a healthy instance.
-        FiniteInputGuard.validate(value)
+        try:
+            FiniteInputGuard.validate(value)
+        except ValueError:
+            self.failure_code = "INPUT_REJECTED"
+            raise
+        self.failure_code = None
         try:
             self.indicator.update(value)
         except Exception:
             # Original update may have mutated state before raising.
             self.invalidated = True
+            self.failure_code = "ENGINE_UPDATE_FAILED"
             raise
         try:
             result = self.indicator.indicator.current.value
         except Exception:
             # The original update already ran; quarantine a broken accessor.
             self.invalidated = True
+            self.failure_code = "RESULT_ACCESS_FAILED"
             raise
         if isinstance(result, bool) or not isinstance(result, (int, float)):
             self.invalidated = True
+            self.failure_code = "OUTPUT_INVALID"
             raise ValueError("indicator output is not a finite numeric result")
         try:
             valid = math.isfinite(result)
@@ -77,10 +86,39 @@ class FiniteOutputBoundary:
             valid = False
         if not valid:
             self.invalidated = True
+            self.failure_code = "OUTPUT_NONFINITE"
             raise ValueError("indicator output is nonfinite; consumer must abstain")
         return result
 
 class GuardTests(unittest.TestCase):
+    def test_boundary_failure_codes_are_distinct_and_fail_closed(self):
+        healthy = FiniteOutputBoundary(mod.SimpleMovingAverage(period=3))
+        with self.assertRaises(ValueError):
+            healthy.update(float("nan"))
+        self.assertEqual(healthy.failure_code, "INPUT_REJECTED")
+        self.assertFalse(healthy.invalidated)
+        self.assertEqual(healthy.update(12), 12)
+        self.assertIsNone(healthy.failure_code)
+
+        class BrokenEngine:
+            def update(self, value):
+                raise ArithmeticError("synthetic engine failure")
+        failed = FiniteOutputBoundary(BrokenEngine())
+        with self.assertRaises(ArithmeticError):
+            failed.update(1)
+        self.assertEqual(failed.failure_code, "ENGINE_UPDATE_FAILED")
+        self.assertTrue(failed.invalidated)
+        with self.assertRaises(RuntimeError):
+            failed.update(2)
+        self.assertEqual(failed.failure_code, "ENGINE_UPDATE_FAILED")
+
+        overflow = FiniteOutputBoundary(mod.SimpleMovingAverage(period=3))
+        overflow.update(1e308)
+        with self.assertRaises(ValueError):
+            overflow.update(1e308)
+        self.assertEqual(overflow.failure_code, "OUTPUT_NONFINITE")
+        self.assertTrue(overflow.invalidated)
+
     def test_denied_input_never_invokes_original_engine(self):
         # Boundary denial must precede every original update() call.
         class SpyIndicator:

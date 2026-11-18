@@ -1096,16 +1096,83 @@ def get_portfolio_nav_history_replay(transactions):
         return {"dates": [], "navs": [], "costs": [], "error": str(e)}
 
 
+# Opt-in original Qt provider QA only. Never report untrusted Yahoo exception
+# strings/cookies/URLs/crumbs/credentials through MCP or the native test log.
+# These are *suggestive* categories from library diagnostics, not independently
+# verified HTTP statuses or proof of upstream market-data provenance.
+_PUBLIC_YAHOO_HISTORY_CLASSES = frozenset({
+    "POSSIBLE_RATE_LIMIT", "POSSIBLE_TIMEOUT", "POSSIBLE_PROXY_FAILURE",
+    "POSSIBLE_TLS_FAILURE", "POSSIBLE_CRUMB_OR_COOKIE", "POSSIBLE_AUTH_DENIAL",
+    "YFINANCE_GENERIC_NO_PRICE", "EMPTY_UNATTRIBUTED", "EXCEPTION_UNCLASSIFIED",
+})
+
+
+def _public_yahoo_history_qa_enabled(symbol, period, interval):
+    return (os.environ.get("FINCEPT_PUBLIC_MCP_HISTORY_QA") == "SPY_5D_PUBLIC_READ"
+            and symbol == "SPY" and period == "5d" and interval == "1d")
+
+
+def _public_yahoo_history_qa_class(symbol, exception=None):
+    # Read ONLY exact symbol's optional in-process yfinance diagnostic, never
+    # emit it. yfinance versions may remove this registry without notice.
+    evidence = []
+    if exception is not None:
+        evidence.append(type(exception).__name__)
+        evidence.append(str(exception)[:2048])
+    shared = getattr(yf, "shared", None)
+    errors = getattr(shared, "_ERRORS", None)
+    if isinstance(errors, dict):
+        internal_error = errors.get(symbol)
+        if isinstance(internal_error, str):
+            evidence.append(internal_error[:2048])
+    message = " ".join(evidence).casefold()
+    if any(word in message for word in ("ratelimit", "rate limit", "too many requests", "http 429", "status 429")):
+        result = "POSSIBLE_RATE_LIMIT"
+    elif any(word in message for word in ("timeout", "timed out", "deadline")):
+        result = "POSSIBLE_TIMEOUT"
+    elif any(word in message for word in ("proxyerror", "proxy error", "proxyconnect", "proxy failure")):
+        result = "POSSIBLE_PROXY_FAILURE"
+    elif any(word in message for word in ("sslerror", "certificate", "tls handshake")):
+        result = "POSSIBLE_TLS_FAILURE"
+    elif any(word in message for word in ("crumb", "cookie")):
+        result = "POSSIBLE_CRUMB_OR_COOKIE"
+    elif any(word in message for word in ("http 401", "http 403", "unauthorized", "forbidden")):
+        result = "POSSIBLE_AUTH_DENIAL"
+    elif any(word in message for word in ("yfpricesmissingerror", "no price data found", "possibly delisted", "no data found")):
+        # yfinance 0.2.61 constructs YFPricesMissingError with the generic
+        # phrase 'possibly delisted' for MANY invalid/empty chart responses.
+        # It cannot establish listing status; report only the library symptom.
+        result = "YFINANCE_GENERIC_NO_PRICE"
+    else:
+        result = "EXCEPTION_UNCLASSIFIED" if exception is not None else "EMPTY_UNATTRIBUTED"
+    assert result in _PUBLIC_YAHOO_HISTORY_CLASSES
+    return result
+
+
+def _public_yahoo_history_qa_unavailable(symbol, exception=None):
+    return {"error": "HISTORY_UNAVAILABLE",
+            "qa_failure_class": _public_yahoo_history_qa_class(symbol, exception)}
+
+
 def get_historical_period(symbol, period='6mo', interval='1d'):
     """Fetch historical data using a period string (e.g., '1mo', '6mo', '1y', '5y')"""
     try:
         import io, contextlib
+        if _public_yahoo_history_qa_enabled(symbol, period, interval):
+            # A previous yfinance attempt in a persistent daemon might have
+            # left a stale error for this symbol. Attribute only diagnostics
+            # collected during THIS one opted-in request, not old failures.
+            errors = getattr(getattr(yf, "shared", None), "_ERRORS", None)
+            if isinstance(errors, dict):
+                errors.pop(symbol, None)
         ticker = yf.Ticker(symbol)
         _buf = io.StringIO()
         with contextlib.redirect_stdout(_buf):
             hist = ticker.history(period=period, interval=interval, timeout=_NET_TIMEOUT)
 
         if hist.empty:
+            if _public_yahoo_history_qa_enabled(symbol, period, interval):
+                return _public_yahoo_history_qa_unavailable(symbol)
             return []
 
         historical_data = []
@@ -1127,6 +1194,8 @@ def get_historical_period(symbol, period='6mo', interval='1d'):
 
         return historical_data
     except Exception as e:
+        if _public_yahoo_history_qa_enabled(symbol, period, interval):
+            return _public_yahoo_history_qa_unavailable(symbol, e)
         return {"error": str(e), "symbol": symbol}
 
 def resolve_symbol(symbol):

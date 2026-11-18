@@ -181,7 +181,16 @@ void PythonWorker::launch_process() {
             return;
         const QByteArray err = proc_->readAllStandardError();
         if (!err.isEmpty()) {
-            LOG_WARN("PythonWorker", QString("stderr: %1").arg(QString::fromUtf8(err).trimmed()));
+            // Public-source native QA must never persist untrusted yfinance
+            // stderr (crumb/cookie, URLs, authentication text, or market data).
+            // Normal desktop diagnostic behavior is unchanged.
+            const bool public_history_qa =
+                QCoreApplication::arguments().contains(QStringLiteral("--selftest-mcp-server")) &&
+                qEnvironmentVariable("FINCEPT_PUBLIC_MCP_HISTORY_QA") == QLatin1String("SPY_5D_PUBLIC_READ");
+            if (public_history_qa)
+                LOG_WARN("PythonWorker", "Public Yahoo QA stderr withheld (untrusted provider output)");
+            else
+                LOG_WARN("PythonWorker", QString("stderr: %1").arg(QString::fromUtf8(err).trimmed()));
         }
     });
 

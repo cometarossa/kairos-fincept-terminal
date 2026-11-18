@@ -12,6 +12,7 @@ import select
 import socket
 import socketserver
 import sys
+import threading
 import time
 
 APPROVED = frozenset({
@@ -20,7 +21,15 @@ APPROVED = frozenset({
     'fc.yahoo.com',
     'finance.yahoo.com',
 })
+# Maximum admitted CONNECT attempts, INCLUDING intentional local denials.
+# Atomic admission closes the multithreaded race in a non-atomic += counter.
 MAX_CONNECTIONS = 24
+HOST_LABELS = {
+    'query1.finance.yahoo.com': 'Q1',
+    'query2.finance.yahoo.com': 'Q2',
+    'fc.yahoo.com': 'FC',
+    'finance.yahoo.com': 'FINANCE',
+}
 MAX_BYTES_PER_DIRECTION = 3_000_000
 MAX_LIFETIME_SECONDS = 40
 
@@ -48,15 +57,17 @@ class OnlyYahooProxy(socketserver.ThreadingMixIn, socketserver.TCPServer):
     def __init__(self, address):
         super().__init__(address, ConnectHandler)
         self.count = 0
+        self._admission_lock = threading.Lock()
 
 
 class ConnectHandler(socketserver.BaseRequestHandler):
     def handle(self):
         connection = self.request
         connection.settimeout(4)
-        self.server.count += 1
-        if self.server.count > MAX_CONNECTIONS:
-            return
+        with self.server._admission_lock:
+            if self.server.count >= MAX_CONNECTIONS:
+                return
+            self.server.count += 1
         data = bytearray()
         while b'\r\n\r\n' not in data and len(data) < 8192:
             try:
@@ -78,7 +89,10 @@ class ConnectHandler(socketserver.BaseRequestHandler):
             except OSError:
                 pass
             return
-        print("QA_PROXY_APPROVED_CONNECT", flush=True)
+        # Report only a fixed approved-host family, never CONNECT lines or
+        # request URLs. The caller aggregates these metadata-only tokens.
+        with self.server._admission_lock:
+            print("QA_PROXY_APPROVED_CONNECT_HOST=" + HOST_LABELS[host], flush=True)
         # DNS is resolved by this short-lived proxy only, never by Fincept's
         # original Python subprocess (which is confined by Seatbelt).
         try:

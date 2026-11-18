@@ -77,7 +77,7 @@ class PublicYahooFailureClasses(unittest.TestCase):
             ('SSLerror certificate failed; Bearer PROTECTED', 'POSSIBLE_TLS_FAILURE'),
             ('Cookie fetch returned bad crumb: ABCSECRET', 'POSSIBLE_CRUMB_OR_COOKIE'),
             ('HTTP 403 credential in query', 'POSSIBLE_AUTH_DENIAL'),
-            ('No price data found, possibly delisted', 'POSSIBLE_UNLISTED_SYMBOL'),
+            ('No price data found, possibly delisted', 'YFINANCE_GENERIC_NO_PRICE'),
         ]
         for diagnostic, expected in examples:
             with self.subTest(expected=expected):
@@ -86,6 +86,16 @@ class PublicYahooFailureClasses(unittest.TestCase):
                 self.assertEqual(result['error'], 'HISTORY_UNAVAILABLE')
                 self.assertNotIn('SECRET', str(result))
                 self.assertNotIn('PROTECTED', str(result))
+
+    def test_yfinance_generic_possibly_delisted_is_not_listing_evidence(self):
+        # In yfinance 0.2.61 this generic phrase arises for MANY upstream
+        # invalid-chart responses, not a verified delisting event.
+        for diagnostic in ('possibly delisted; no price data found (period=5d)',
+                           'YFPricesMissingError: missing chart quote'):
+            with self.subTest(diagnostic=diagnostic):
+                result = self._run_empty(error=diagnostic)
+                self.assertEqual(result['qa_failure_class'], 'YFINANCE_GENERIC_NO_PRICE')
+                self.assertNotIn('delisted', str(result).lower())
 
     def test_stale_error_cannot_label_next_new_empty_request(self):
         self.fake.shared._ERRORS['SPY'] = 'YFRateLimitError previously'

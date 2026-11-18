@@ -666,7 +666,7 @@ void MarketDataService::fetch_history(const QString& symbol, const QString& peri
                 static const QSet<QString> kAllowed{
                     "POSSIBLE_RATE_LIMIT", "POSSIBLE_TIMEOUT", "POSSIBLE_PROXY_FAILURE",
                     "POSSIBLE_TLS_FAILURE", "POSSIBLE_CRUMB_OR_COOKIE", "POSSIBLE_AUTH_DENIAL",
-                    "POSSIBLE_UNLISTED_SYMBOL", "EMPTY_UNATTRIBUTED", "EXCEPTION_UNCLASSIFIED"};
+                    "YFINANCE_GENERIC_NO_PRICE", "EMPTY_UNATTRIBUTED", "EXCEPTION_UNCLASSIFIED"};
                 const QString category = doc.isObject()
                     ? doc.object().value(QStringLiteral("qa_failure_class")).toString() : QString();
                 const QString safe = kAllowed.contains(category) ? category : QStringLiteral("MISSING_OR_UNRECOGNIZED");

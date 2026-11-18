@@ -1103,7 +1103,7 @@ def get_portfolio_nav_history_replay(transactions):
 _PUBLIC_YAHOO_HISTORY_CLASSES = frozenset({
     "POSSIBLE_RATE_LIMIT", "POSSIBLE_TIMEOUT", "POSSIBLE_PROXY_FAILURE",
     "POSSIBLE_TLS_FAILURE", "POSSIBLE_CRUMB_OR_COOKIE", "POSSIBLE_AUTH_DENIAL",
-    "POSSIBLE_UNLISTED_SYMBOL", "EMPTY_UNATTRIBUTED", "EXCEPTION_UNCLASSIFIED",
+    "YFINANCE_GENERIC_NO_PRICE", "EMPTY_UNATTRIBUTED", "EXCEPTION_UNCLASSIFIED",
 })
 
 
@@ -1138,8 +1138,11 @@ def _public_yahoo_history_qa_class(symbol, exception=None):
         result = "POSSIBLE_CRUMB_OR_COOKIE"
     elif any(word in message for word in ("http 401", "http 403", "unauthorized", "forbidden")):
         result = "POSSIBLE_AUTH_DENIAL"
-    elif any(word in message for word in ("no price data found", "delisted", "not found", "no data found")):
-        result = "POSSIBLE_UNLISTED_SYMBOL"
+    elif any(word in message for word in ("yfpricesmissingerror", "no price data found", "possibly delisted", "no data found")):
+        # yfinance 0.2.61 constructs YFPricesMissingError with the generic
+        # phrase 'possibly delisted' for MANY invalid/empty chart responses.
+        # It cannot establish listing status; report only the library symptom.
+        result = "YFINANCE_GENERIC_NO_PRICE"
     else:
         result = "EXCEPTION_UNCLASSIFIED" if exception is not None else "EMPTY_UNATTRIBUTED"
     assert result in _PUBLIC_YAHOO_HISTORY_CLASSES

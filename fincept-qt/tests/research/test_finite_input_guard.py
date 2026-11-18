@@ -90,7 +90,38 @@ class FiniteOutputBoundary:
             raise ValueError("indicator output is nonfinite; consumer must abstain")
         return result
 
+def invoke_synthetic_readonly(boundary, value, capability):
+    """Research-only deny-by-default adapter; not the production registry."""
+    if capability != "fincept.indicator.synthetic.read.v1":
+        return {"status": "ABSTAIN", "error": "CAPABILITY_DENIED", "value": None}
+    try:
+        result = boundary.update(value)
+    except Exception:
+        return {"status": "ABSTAIN", "error": boundary.failure_code or "BOUNDARY_FAILED", "value": None}
+    return {"status": "OK", "error": None, "value": result}
+
+
 class GuardTests(unittest.TestCase):
+    def test_synthetic_readonly_contract_abstains_without_leaking_bad_values(self):
+        original = mod.SimpleMovingAverage(period=3)
+        boundary = FiniteOutputBoundary(original)
+        denied = invoke_synthetic_readonly(boundary, 10, "broker.order.place")
+        self.assertEqual(denied, {"status": "ABSTAIN", "error": "CAPABILITY_DENIED", "value": None})
+        self.assertEqual(original.samples, 0)
+        allowed = "fincept.indicator.synthetic.read.v1"
+        self.assertEqual(invoke_synthetic_readonly(boundary, 10, allowed),
+                         {"status": "OK", "error": None, "value": 10})
+        rejected = invoke_synthetic_readonly(boundary, float("nan"), allowed)
+        self.assertEqual(rejected, {"status": "ABSTAIN", "error": "INPUT_REJECTED", "value": None})
+        self.assertFalse(boundary.invalidated)
+        self.assertEqual(original.samples, 1)
+        self.assertEqual(invoke_synthetic_readonly(boundary, 1e308, allowed)["status"], "OK")
+        overflow = invoke_synthetic_readonly(boundary, 1e308, allowed)
+        self.assertEqual(overflow, {"status": "ABSTAIN", "error": "OUTPUT_NONFINITE", "value": None})
+        self.assertTrue(boundary.invalidated)
+        self.assertEqual(invoke_synthetic_readonly(boundary, 12, allowed),
+                         {"status": "ABSTAIN", "error": "OUTPUT_NONFINITE", "value": None})
+
     def test_boundary_failure_codes_are_distinct_and_fail_closed(self):
         healthy = FiniteOutputBoundary(mod.SimpleMovingAverage(period=3))
         with self.assertRaises(ValueError):

@@ -1106,16 +1106,17 @@ def get_historical_period(symbol, period='6mo', interval='1d'):
         for index, row in hist.iterrows():
             # Same NaN guard as get_historical — this is the chart path, where
             # one halted bar previously blanked the entire series.
+            # Keep NaN/missing closes as explicit null: dropping the bar would
+            # make a gapped series look complete. The Qt integrity decoder
+            # will reject the WHOLE untrustworthy result, not quietly skip it.
             close = _num(row['Close'])
-            if close is None:
-                continue
             historical_data.append({
                 "timestamp": int(index.timestamp()),
                 "open": _num(row['Open']),
                 "high": _num(row['High']),
                 "low": _num(row['Low']),
                 "close": close,
-                "volume": _int(row['Volume'], 0)
+                "volume": _int(row['Volume'])  # missing volume stays unknown, not invented zero
             })
 
         return historical_data

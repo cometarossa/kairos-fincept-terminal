@@ -132,7 +132,7 @@ print('LOOPBACK_ONLY_EXTERNAL_DENIED')
                 )
                 self.assertEqual(p.returncode, 0, f"{flag} failed:\n{p.stdout[-1800:]}")
                 if flag == "--selftest-mcp-server":
-                    self.assertIn("50 passed, 0 failed", p.stdout)
+                    self.assertIn("60 passed, 0 failed", p.stdout)
                     for required in (
                         "synthetic quote test cache database is open",
                         "synthetic quote was seeded without provider calls",
@@ -143,6 +143,16 @@ print('LOOPBACK_ONLY_EXTERNAL_DENIED')
                         "original get_history MCP returns latest synthetic OHLCV bars only",
                         "synthetic history mismatched window fails closed without provider",
                         "synthetic history fixture cleared before end of selftest",
+                        "provider history integrity accepts valid OHLCV UTC bars",
+                        "provider history integrity rejects missing close",
+                        "provider history integrity rejects unknown volume, not zero",
+                        "provider history integrity rejects duplicate timestamp",
+                        "provider history integrity rejects nonmonotonic timestamps",
+                        "provider history integrity rejects fractional UTC epoch",
+                        "provider history integrity rejects future timestamp",
+                        "provider history integrity rejects inconsistent OHLC envelope",
+                        "provider history integrity rejects negative OHLC price",
+                        "provider history integrity rejects noninteger volume",
                     ):
                         self.assertIn("[PASS] " + required, p.stdout)
                 elif flag == "--selftest-tools":

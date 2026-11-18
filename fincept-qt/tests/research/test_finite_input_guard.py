@@ -119,6 +119,26 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(overflow.failure_code, "OUTPUT_NONFINITE")
         self.assertTrue(overflow.invalidated)
 
+    def test_boolean_output_is_rejected_and_instance_quarantined(self):
+        # bool is a Python int subclass, but never a valid financial indicator result.
+        class BooleanOutputIndicator:
+            def __init__(self):
+                self.calls = 0
+                self.current = type("Current", (), {"value": True})()
+            def update(self, value):
+                self.calls += 1
+
+        original = BooleanOutputIndicator()
+        boundary = FiniteOutputBoundary(original)
+        with self.assertRaisesRegex(ValueError, "not a finite numeric result"):
+            boundary.update(12)
+        self.assertEqual(boundary.failure_code, "OUTPUT_INVALID")
+        self.assertTrue(boundary.invalidated)
+        with self.assertRaisesRegex(RuntimeError, "instance invalidated"):
+            boundary.update(13)
+        self.assertEqual(original.calls, 1)
+        self.assertEqual(boundary.failure_code, "OUTPUT_INVALID")
+
     def test_denied_input_never_invokes_original_engine(self):
         # Boundary denial must precede every original update() call.
         class SpyIndicator:

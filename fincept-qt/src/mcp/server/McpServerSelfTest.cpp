@@ -7,6 +7,7 @@
 #include "mcp/server/EssentialTools.h"
 #include "mcp/server/McpHttpServer.h"
 #include "services/markets/MarketDataService.h"
+#include "services/markets/HistoryIntegrity.h"
 #include "storage/cache/CacheManager.h"
 #include "storage/sqlite/CacheDatabase.h"
 
@@ -346,6 +347,56 @@ int run_mcp_server_selftest() {
                       res.value(QStringLiteral("structuredContent")).toObject().contains(QStringLiteral("tools")),
                   QStringLiteral("tools/call tool_list returns content + structuredContent"), clip(first_text(res)));
     }
+    // Provider response integrity: the same strict decoder used by the
+    // production MarketDataService must never normalize invalid data to zero.
+    // This is structural QA only; it does not certify source timestamps.
+    {
+        namespace integrity = fincept::services::history_integrity;
+        const qint64 test_now = 1704412800; // 2024-01-05 UTC, deterministic
+        const QJsonObject a{{"timestamp", 1704067200}, {"open", 100.0}, {"high", 105.0},
+                            {"low", 99.0}, {"close", 103.0}, {"volume", 1000}};
+        const QJsonObject b{{"timestamp", 1704153600}, {"open", 103.0}, {"high", 108.0},
+                            {"low", 102.0}, {"close", 107.0}, {"volume", 1250}};
+        const auto decode = [test_now](const QJsonArray& bars) {
+            return integrity::decode(QJsonDocument(bars), test_now);
+        };
+        const auto valid = decode(QJsonArray{a, b});
+        rep.check(valid.has_value() && valid->size() == 2 && valid->at(1).close == 107.0,
+                  QStringLiteral("provider history integrity accepts valid OHLCV UTC bars"));
+        QJsonObject missing_close = a;
+        missing_close.remove(QStringLiteral("close"));
+        rep.check(!decode(QJsonArray{missing_close}).has_value(),
+                  QStringLiteral("provider history integrity rejects missing close"));
+        QJsonObject missing_volume = a;
+        missing_volume.insert(QStringLiteral("volume"), QJsonValue::Null);
+        rep.check(!decode(QJsonArray{missing_volume}).has_value(),
+                  QStringLiteral("provider history integrity rejects unknown volume, not zero"));
+        rep.check(!decode(QJsonArray{a, a}).has_value(),
+                  QStringLiteral("provider history integrity rejects duplicate timestamp"));
+        rep.check(!decode(QJsonArray{b, a}).has_value(),
+                  QStringLiteral("provider history integrity rejects nonmonotonic timestamps"));
+        QJsonObject fractional_time = a;
+        fractional_time.insert(QStringLiteral("timestamp"), 1704067200.5);
+        rep.check(!decode(QJsonArray{fractional_time}).has_value(),
+                  QStringLiteral("provider history integrity rejects fractional UTC epoch"));
+        QJsonObject future_time = a;
+        future_time.insert(QStringLiteral("timestamp"), test_now + 100000);
+        rep.check(!decode(QJsonArray{future_time}).has_value(),
+                  QStringLiteral("provider history integrity rejects future timestamp"));
+        QJsonObject inverted = a;
+        inverted.insert(QStringLiteral("low"), 104.0);
+        rep.check(!decode(QJsonArray{inverted}).has_value(),
+                  QStringLiteral("provider history integrity rejects inconsistent OHLC envelope"));
+        QJsonObject negative_open = a;
+        negative_open.insert(QStringLiteral("open"), -1.0);
+        rep.check(!decode(QJsonArray{negative_open}).has_value(),
+                  QStringLiteral("provider history integrity rejects negative OHLC price"));
+        QJsonObject fractional_volume = a;
+        fractional_volume.insert(QStringLiteral("volume"), 1000.5);
+        rep.check(!decode(QJsonArray{fractional_volume}).has_value(),
+                  QStringLiteral("provider history integrity rejects noninteger volume"));
+    }
+
     // F1.2: test-only in-memory historical bars. The friend-scope fixture is
     // armed BEFORE the external KAIROS child so both C++ and Python can use the
     // genuine get_history handler without reaching PythonRunner or yfinance.

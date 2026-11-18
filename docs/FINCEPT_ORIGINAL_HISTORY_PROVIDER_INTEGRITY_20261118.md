@@ -1,0 +1,29 @@
+# Fincept original provider-history integrity gate — 18 November 2026
+
+**Status: DRAFT stacked on Fincept #61→#58→#56→#55, not merged or deployed.** Research-only source verification; no broker connections, trades, provider authentication or model promotion.
+
+## Why this is necessary
+
+The original `MarketDataService::fetch_history()` calls `PythonRunner::run("yfinance_data.py", ... "historical_period")` when the native selftest fixture is not armed. It previously accepted any JSON array from the Python provider and converted `o["timestamp"].toDouble()` / `o["open"].toDouble()` etc., which silently mapped missing/null/malformed values to **0**. Its original Python history converter also mapped missing Yahoo volume to a known zero (`_int(row['Volume'], 0)`). A structurally invalid bar could therefore be presented as a real OHLCV observation.
+
+## Changes
+
+- Adds **pure, header-only C++** `services/markets/HistoryIntegrity.h`: `history_integrity::decode()` returns `std::nullopt` unless the entire finite nonempty JSON series (at most 20,000 bars) has explicit valid numeric timestamp/Open/High/Low/Close/Volume fields; UTC-second timestamps must be positive, integral, strictly increasing, unique, and not more than 24h after the supplied local time. OHLC must be positive and consistent with min/max bounds. Volume is integral, nonnegative and within exactly representable IEEE754 integer range. Empty or errored provider payloads fail closed.
+- Changes **only the original provider-result conversion** inside `MarketDataService::fetch_history()` to use this same decoder. Invalid history yields `cb(false, {})` without exposing a fake zero price; no broker behavior, trading guard, market-cache mutation, Qt MCP tool/schema, timeout, network policy, request frequency or PythonRunner dispatch is changed. The existing selftest-only in-memory fixture from parent #61 is untouched.
+- Changes **only** the `historical_period` Python command's volume serialization: a missing/NaN cell now becomes JSON `null` rather than zero; valid numeric `0` remains exactly zero. This allows the C++ boundary to distinguish unknown from a genuine zero. Other existing yfinance commands are not changed.
+
+These guards check **structural plausibility only**. They do **not** verify actual Yahoo ownership, exchange venue, corporate-action adjustments, symbol identity, exact exchange event/as-of time, price freshness, nor scientific fitness. No real provider endpoint was contacted by these tests. Positive OHLC is intentionally conservative; legitimate negative-priced contracts (rare, e.g. exceptional futures settlement events) are rejected rather than silently treated as valid and must receive a separately reviewed instrument-aware policy.
+
+## Exact evidence
+
+- Branch parent: Fincept DRAFT #61 exact head `f53e015462f1f7fe2aa9b638f3cda582fb5145d5` with its prior synthetic `get_history` tests; parent is stacked on #58/#56 and unmerged.
+- Mac Intel isolated incremental **Qt 6.8.3 C++ compilation PASS**, six Ninja steps including new history header, native selftest and original market service. Test executable SHA-256 **`68d2b429245d1ac225afac0fcfef07f0e5780b06b46cf8409fe2f911e261ce73`**. Existing C++ missing-field initializer and duplicate md4c linker warnings are preexisting; the extra unused lambda-capture warning is in parent #61 test code, not in the new decoder.
+- **10 additional C++ native `HistoryIntegrity` assertions PASS**: valid UTC OHLCV, missing close, null volume, duplicate and reverse timestamps, fractional/future timestamp, impossible OHLC envelope, negative price, fractional volume. Original Qt MCP server **60/60** with no external KAIROS client, **61/61** when connected to original KAIROS DRAFT #666 Python `fincept.history.read` client. The original MCP server uses synthetic bars and runs with macOS Seatbelt allowing only loopback, independently proving outbound internet denied (`EPERM`). The child KAIROS client authenticated via ephemeral test-only bearer and passed its synthetic history content/authority checks.
+- Original Fincept native macOS full wrapper **4/4 PASS** including 12 native suite enumeration, 52 original GUI screen constructors, and denial of external network. **8 local Python tests PASS**: five import/execute the original `yfinance_data.py` with injected isolated synthetic pandas frames and a fake Ticker module (timezone conversion, null vs known-zero volume, NaN closes, empty and provider exception), plus three explicit structural checks verifying the C++ decoder wiring and no default-zero path.
+- Original main branch and broker/cBot integration unchanged. This is **exact-binary local verification**, not GitHub CI and **not a verified live Yahoo market feed**.
+
+## Remaining prerequisite: real historical source qualification
+
+A real-provider validation must be run **once, separately**, in a disposable runtime with an explicitly approved public-market-only Yahoo connection and dependencies. No yfinance package was installed in the iMac's inspected Python 3.9/3.11 or Debian VM environments during this QA; no unreviewed package installation or provider traffic was forced. It must capture request metadata and response timestamps without publishing secrets, compare broker-independent corroborating observations, account for market sessions/time zones/corporate actions, measure missing/stale bars, enforce rate budgets, and maintain `market_as_of_verified=false` / `execution_eligible=false` until evidence is independently certified.
+
+**No IG login, demo order, live order, production deployment, strategy change or scientific-promotion authority accompanies this PR.** The full Fincept toolkit still needs per-family original native functionality QA and a reviewed authenticated runtime bridge to KAIROS.

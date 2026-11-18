@@ -1115,7 +1115,7 @@ def get_historical_period(symbol, period='6mo', interval='1d'):
                 "high": _num(row['High']),
                 "low": _num(row['Low']),
                 "close": close,
-                "volume": _int(row['Volume'], 0)
+                "volume": _int(row['Volume'])  # missing volume stays unknown, not invented zero
             })
 
         return historical_data

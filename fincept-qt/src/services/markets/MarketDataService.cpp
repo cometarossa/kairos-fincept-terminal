@@ -270,21 +270,19 @@ void MarketDataService::refresh(const QStringList& topics) {
                     hub.publish_error(topic, errstr.left(200));
                     continue;
                 }
+                // The DataHub batch path must apply the same ALL-BARS integrity
+                // boundary as fetch_history()/MCP: QJsonValue::toDouble() used
+                // to turn a missing/null OHLCV field into a fabricated zero and
+                // a missing provider series into a successful empty history.
+                // Neither is research-quality data. Reject the complete series
+                // and publish an error, never substitute or skip individual bars.
                 const QJsonArray pts = h.value("points").toArray();
-                QVector<HistoryPoint> points;
-                points.reserve(pts.size());
-                for (const auto& pv : pts) {
-                    const QJsonObject p = pv.toObject();
-                    HistoryPoint pt;
-                    pt.timestamp = static_cast<qint64>(p["timestamp"].toDouble());
-                    pt.open = p["open"].toDouble();
-                    pt.high = p["high"].toDouble();
-                    pt.low = p["low"].toDouble();
-                    pt.close = p["close"].toDouble();
-                    pt.volume = static_cast<qint64>(p["volume"].toDouble());
-                    points.append(pt);
+                const auto decoded = history_integrity::decode(QJsonDocument(pts));
+                if (!decoded.has_value()) {
+                    hub.publish_error(topic, QStringLiteral("invalid or unavailable batch history"));
+                    continue;
                 }
-                self->publish_history_to_hub(sym, per, ivl, points);
+                self->publish_history_to_hub(sym, per, ivl, *decoded);
                 ++hists_ok;
             }
             for (const auto& h : hist_reqs) {

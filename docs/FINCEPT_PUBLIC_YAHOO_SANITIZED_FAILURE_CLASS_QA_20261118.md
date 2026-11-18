@@ -1,0 +1,27 @@
+# Fincept original Yahoo history QA: sanitized failure classes
+
+**2026-11-18. DRAFT ONLY; unmerged.** Builds on Fincept review #64 (head `4685bb104987948127d00b48194ee8705e4b01ea`), itself stacked on #63→#62→#61→#58→#56→#55. No deployment, broker call, new token, order, scientific promotion or increased provider request budget.
+
+## Why this matters
+
+The original Yahoo adapter `yfinance_data.py::get_historical_period()` may receive an empty DataFrame even when an upstream HTTP request has failed inside `yfinance`. Prior isolated direct Python read returned five structurally plausible SPY bars, whereas the real original Qt `PythonWorker` → Yahoo → MCP → external KAIROS integration in Fincept #63 / KAIROS #667 received an **empty array** and correctly returned **`FINCEPT_UNAVAILABLE`**. The original worker test recorded 23 allowed Yahoo CONNECT attempts plus one deliberately denied **local proxy** request to an IG hostname, at a fixed budget of 24. **The upstream cause remains unverified.** No more Yahoo calls were needed to implement this patch.
+
+Prior to this change an empty `hist` was indistinguishable in this QA from a genuine absence of history; raw exceptions or `PythonWorker` stderr risked echoing cookies, crumbs, paths or full URLs. We need evidence about failure *category* without making undocumented claims about the Yahoo server.
+
+## Changed surfaces, explicitly restricted to exact native test mode
+
+- On the **exact** `FINCEPT_PUBLIC_MCP_HISTORY_QA=SPY_5D_PUBLIC_READ` with **only** symbol `SPY`, period `5d` and interval `1d`, the original `get_historical_period()` now returns an error envelope **only when history is empty or an exception occurs**, with `"error":"HISTORY_UNAVAILABLE"` and exactly one `qa_failure_class` enum. It queries the test attempt's `yfinance.shared._ERRORS[symbol]` only when the optional yfinance-version-specific dictionary exists, discards any stale entry for SPY before the query, and never copies raw error contents into the result. No regular quote/history provider response or Qt user-facing API is changed without the precise opt-in. Valid bars remain unchanged. Outside this opt-in, original empty-list and exception behavior remains unchanged.
+- Fixed, **tentative** categories: `POSSIBLE_RATE_LIMIT`, `POSSIBLE_TIMEOUT`, `POSSIBLE_PROXY_FAILURE`, `POSSIBLE_TLS_FAILURE`, `POSSIBLE_CRUMB_OR_COOKIE`, `POSSIBLE_AUTH_DENIAL`, `POSSIBLE_UNLISTED_SYMBOL`, `EMPTY_UNATTRIBUTED`, `EXCEPTION_UNCLASSIFIED`. These are substring/type hints, **not proven HTTP status or proof of server intent**. An absent/unknown dictionary produces an honest `EMPTY_UNATTRIBUTED`, not an invented reason.
+- The original C++ `MarketDataService::fetch_history` prints **only a validated fixed category code** to its local, opt-in native-QA stdout, or `RUNNER_FAILURE` / `MISSING_OR_UNRECOGNIZED` if the result cannot be classified. It continues to reject invalid data through the existing `history_integrity::decode` guard (`cb(false,{})`); the category is never offered to KAIROS as tradable data, never bypasses availability checks, and never grants `market_as_of_verified`, science or execution authority.
+- The original C++ `PythonWorker` **redacts raw untrusted stderr only in exact public selftest mode**. Its normal user-facing Python setup and production logging are not modified. The existing test-only exclusion of Keychain/SecureStorage-managed credentials from the public QA remains intact.
+
+## Verified exact evidence
+
+- **10/10 new original-source Python adversarial regression tests PASS**, with fake pandas frames, simulated rate-limit/proxy/TLS/crumb/auth/timeout outputs, stale yfinance diagnostic registry, wrong symbol/window/default-mode no-op, exception data redaction and Qt C++ source guard checks.
+- **Previous original provider tests 5/5 PASS; original DataHub batch tests 7/7 PASS.** No provider call in any of these tests. Original Qt 6.8.3 incremental native build **PASS**, exact binary SHA-256 `e0c468f30358f2f0a448e1b623778944f6c864fa525593e7025e855e3424e680`.
+- Original native headless wrapper **4/4 PASS** in network-denied macOS Seatbelt, including original MCP synthetic assertions, screen/Qt suite smoke and denial of non-loopback network. Preexisting quote initializer and md4c duplicate-library warnings remain.
+- This test result **does not establish the root cause** of the earlier failed live Yahoo path, nor prove a successful real Yahoo→original Qt→MCP→KAIROS round-trip. GitHub CI for this draft must be checked separately; no merge or deploy has occurred.
+
+## Next controlled gate
+
+Only when separately permitted, perform **one** bounded original Fincept Qt→PythonRunner→public Yahoo→authenticated MCP→KAIROS history check on the exact compiled and source-pinned binary, through an independently verified Yahoo-only proxy with maximum existing connection/time limits, no secret environment and explicit outbound Internet denial. Capture **only the fixed failure-class code, attempt count by permitted host, and the KAIROS research-only success/unavailable verdict**. Do not log actual prices, cookies, URLs, crumb or tokens. If `EMPTY_UNATTRIBUTED` persists, trace the original worker's interpreter/module versions and Yahoo's sanitized transport state in a separate offline task; do not extend rate limits or loop retries to force green. A later independent provider/time/adjustments corroboration remains necessary for financial research, and LIVE remains disabled.

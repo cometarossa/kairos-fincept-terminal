@@ -9,6 +9,7 @@
 #include "storage/cache/CacheManager.h"
 #include "storage/repositories/SettingsRepository.h"
 
+#include <QCoreApplication>
 #include <QDateTime>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -622,6 +623,18 @@ void MarketDataService::fetch_info(const QString& symbol, InfoCallback cb) {
 
 void MarketDataService::fetch_history(const QString& symbol, const QString& period, const QString& interval,
                                       HistoryCallback cb) {
+    // Native selftest-only fixture, armed exclusively by the friend entrypoint.
+    // While armed, even a WRONG symbol/window fails closed without calling
+    // PythonRunner: no hidden provider fallback on malformed synthetic input.
+    // Ordinary GUI and production calls take the unchanged path below.
+    if (history_selftest_fixture_.has_value()) {
+        const auto& fixture = *history_selftest_fixture_;
+        const bool match = QCoreApplication::arguments().contains(QStringLiteral("--selftest-mcp-server")) &&
+                           symbol == fixture.symbol && period == fixture.period && interval == fixture.interval;
+        const QVector<HistoryPoint> bars = match ? fixture.bars : QVector<HistoryPoint>{};
+        QTimer::singleShot(0, this, [cb = std::move(cb), match, bars]() mutable { cb(match, bars); });
+        return;
+    }
     QStringList args;
     args << "historical_period" << symbol << period << interval;
 

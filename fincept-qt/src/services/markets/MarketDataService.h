@@ -11,6 +11,11 @@
 #include <QVector>
 
 #include <functional>
+#include <optional>
+
+namespace fincept::mcp {
+int run_mcp_server_selftest();
+}
 
 namespace fincept::services {
 
@@ -156,6 +161,17 @@ class MarketDataService : public QObject, public fincept::datahub::Producer {
     static QStringList global_snapshot_symbols();
 
   private:
+    // Only the original headless MCP selftest can arm this in-memory fixture.
+    // It is never exposed through MCP, settings, environment or ordinary tools.
+    friend int fincept::mcp::run_mcp_server_selftest();
+    struct HistorySelftestFixture {
+        QString symbol;
+        QString period;
+        QString interval;
+        QVector<HistoryPoint> bars;
+    };
+    std::optional<HistorySelftestFixture> history_selftest_fixture_;
+
     MarketDataService();
     void flush_batch();
 

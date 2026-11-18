@@ -27,7 +27,8 @@ class FiniteInputGuard:
     def __init__(self, indicator):
         self.indicator = indicator
 
-    def update(self, value):
+    @staticmethod
+    def validate(value):
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise ValueError("indicator input must be a finite real number")
         try:
@@ -36,6 +37,8 @@ class FiniteInputGuard:
             finite = False
         if not finite:
             raise ValueError("indicator input must be finite")
+    def update(self, value):
+        self.validate(value)
         return self.indicator.update(value)
 
 class FiniteOutputBoundary:
@@ -51,6 +54,8 @@ class FiniteOutputBoundary:
     def update(self, value):
         if self.invalidated:
             raise RuntimeError("indicator instance invalidated; create a fresh instance")
+        # Input denial is pre-mutation; it must not poison a healthy instance.
+        FiniteInputGuard.validate(value)
         try:
             self.indicator.update(value)
         except Exception:
@@ -173,6 +178,20 @@ class GuardTests(unittest.TestCase):
                         guarded.update(float("nan"))
                     self.assertEqual(guarded.indicator.samples, baseline.samples)
                     self.assertEqual(guarded.indicator.current.value, baseline.current.value)
+
+    def test_invalid_input_does_not_invalidate_healthy_output_boundary(self):
+        original = mod.SimpleMovingAverage(period=3)
+        boundary = FiniteOutputBoundary(original)
+        self.assertEqual(boundary.update(10), 10)
+        samples = original.samples
+        for bad in (True, None, float("nan"), 10**1000):
+            with self.subTest(bad=repr(bad)[:30]):
+                with self.assertRaises(ValueError):
+                    boundary.update(bad)
+                self.assertFalse(boundary.invalidated)
+                self.assertEqual(original.samples, samples)
+        self.assertEqual(boundary.update(20), 15)
+        self.assertEqual(original.samples, samples + 1)
 
     def test_output_boundary_denies_overflow_and_preserves_valid_result(self):
         baseline = mod.SimpleMovingAverage(period=3)

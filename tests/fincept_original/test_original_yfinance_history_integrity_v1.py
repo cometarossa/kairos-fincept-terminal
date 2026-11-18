@@ -76,14 +76,16 @@ class OriginalProviderHistoryConversion(unittest.TestCase):
             result = self.module.get_historical_period("SYNTH", "5d", "1d")
         self.assertEqual(result[0]["volume"], 0)
 
-    def test_finite_close_filter_and_empty_data(self):
+    def test_missing_close_is_retained_as_null_and_empty_data_is_empty(self):
         idx = pd.DatetimeIndex(["2024-01-02", "2024-01-03"], tz="UTC")
         frame = pd.DataFrame({"Open": [100, 101], "High": [102, 103], "Low": [99, 100],
                               "Close": [float("nan"), 102], "Volume": [100, 110]}, index=idx)
         with patch.object(self.module.yf, "Ticker", return_value=types.SimpleNamespace(history=lambda **_: frame)):
             result = self.module.get_historical_period("SYNTH", "5d", "1d")
-        self.assertEqual(len(result), 1)
-        self.assertEqual(result[0]["volume"], 110)
+        self.assertEqual(len(result), 2)
+        self.assertIsNone(result[0]["close"])
+        self.assertEqual(result[1]["volume"], 110)
+        self.assertIn('"close": null', json.dumps(result))
         with patch.object(self.module.yf, "Ticker", return_value=types.SimpleNamespace(history=lambda **_: frame.iloc[:0])):
             self.assertEqual(self.module.get_historical_period("SYNTH", "5d", "1d"), [])
 

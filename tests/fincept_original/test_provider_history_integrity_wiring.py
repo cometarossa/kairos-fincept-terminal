@@ -19,6 +19,8 @@ class ProviderHistoryIntegrityWiring(unittest.TestCase):
         body = p[p.index('def get_historical_period('):p.index('def resolve_symbol(',p.index('def get_historical_period('))]
         self.assertIn('"volume": _int(row[\'Volume\'])', body)
         self.assertNotIn('_int(row[\'Volume\'], 0)', body)
+        self.assertNotIn('if close is None:\n                continue', body)
+        self.assertIn('"close": close', body)
 
     def test_decoder_rejects_missing_or_untrustworthy_without_claiming_freshness(self):
         p = (BASE / "fincept-qt/src/services/markets/HistoryIntegrity.h").read_text()

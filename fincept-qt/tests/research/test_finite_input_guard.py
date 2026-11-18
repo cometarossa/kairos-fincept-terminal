@@ -243,6 +243,24 @@ class GuardTests(unittest.TestCase):
             boundary.update(20)
         self.assertEqual(spy.calls, 1)
 
+    def test_non_numeric_output_invalidates_and_denies_reuse(self):
+        # Synthetic contract fault: no non-numeric payload may escape to KAIROS.
+        class NonNumericIndicator:
+            def __init__(self):
+                self.calls = 0
+                self.current = type("Current", (), {"value": "not-a-number"})()
+            def update(self, value):
+                self.calls += 1
+
+        original = NonNumericIndicator()
+        boundary = FiniteOutputBoundary(original)
+        with self.assertRaisesRegex(ValueError, "not a finite numeric result"):
+            boundary.update(10)
+        self.assertTrue(boundary.invalidated)
+        with self.assertRaisesRegex(RuntimeError, "instance invalidated"):
+            boundary.update(11)
+        self.assertEqual(original.calls, 1)
+
     def test_finite_inputs_can_overflow_original_sma_output(self):
         # Known limitation / reproduced defect, NOT a safety PASS:
         # input validation alone cannot guarantee finite derived outputs.

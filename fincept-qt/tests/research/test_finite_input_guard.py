@@ -57,7 +57,12 @@ class FiniteOutputBoundary:
             # Original update may have mutated state before raising.
             self.invalidated = True
             raise
-        result = self.indicator.indicator.current.value
+        try:
+            result = self.indicator.indicator.current.value
+        except Exception:
+            # The original update already ran; quarantine a broken accessor.
+            self.invalidated = True
+            raise
         if isinstance(result, bool) or not isinstance(result, (int, float)):
             self.invalidated = True
             raise ValueError("indicator output is not a finite numeric result")
@@ -216,6 +221,27 @@ class GuardTests(unittest.TestCase):
             boundary.update(20)
         self.assertEqual(original.samples, 1)
         # No rollback or scientific PASS is claimed for the mutated engine.
+    def test_result_accessor_failure_invalidates_instance(self):
+        class BrokenCurrent:
+            @property
+            def value(self):
+                raise RuntimeError("synthetic accessor failure")
+
+        class SpyIndicator:
+            def __init__(self):
+                self.calls = 0
+                self.current = BrokenCurrent()
+            def update(self, value):
+                self.calls += 1
+
+        spy = SpyIndicator()
+        boundary = FiniteOutputBoundary(spy)
+        with self.assertRaisesRegex(RuntimeError, "synthetic accessor failure"):
+            boundary.update(10)
+        self.assertTrue(boundary.invalidated)
+        with self.assertRaisesRegex(RuntimeError, "instance invalidated"):
+            boundary.update(20)
+        self.assertEqual(spy.calls, 1)
 
     def test_finite_inputs_can_overflow_original_sma_output(self):
         # Known limitation / reproduced defect, NOT a safety PASS:

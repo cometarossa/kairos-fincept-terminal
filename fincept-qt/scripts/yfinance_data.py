@@ -576,19 +576,25 @@ def get_batch_all(payload):
                 if not sym:
                     continue
                 points = get_historical_period(sym, period, interval)
-                histories.append({
-                    "symbol": sym,
-                    "period": period,
-                    "interval": interval,
-                    "points": points if isinstance(points, list) else [],
-                })
-            except Exception as e:
+                # A missing/errored provider history is NOT a successful empty
+                # time series. The UI producer must see a bounded error so it
+                # does not publish zero/missing prices as a valid observation.
+                # Do not return provider exception details in shared telemetry:
+                # those may contain URLs, cookies, symbols or authentication.
+                row = {"symbol": sym, "period": period, "interval": interval}
+                if isinstance(points, list) and points:
+                    row["points"] = points
+                else:
+                    row["points"] = []
+                    row["error"] = "HISTORY_UNAVAILABLE"
+                histories.append(row)
+            except Exception:
                 histories.append({
                     "symbol": req.get("symbol", ""),
                     "period": req.get("period", ""),
                     "interval": req.get("interval", ""),
                     "points": [],
-                    "error": str(e),
+                    "error": "HISTORY_UNAVAILABLE",
                 })
         out["histories"] = histories
 

@@ -62,9 +62,9 @@ jobs:
             cmake_extra: "-DCMAKE_OSX_ARCHITECTURES=arm64 -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0"
 
           # ---- macOS x64 (Intel) ----
-          # Cross-compiled on ARM64 runner. CMakeLists.txt auto-disables GGML_NATIVE
-          # and GGML_METAL when CMAKE_OSX_ARCHITECTURES != host processor.
-          - os: macos-15
+          # Native Intel runner: Qt, target and OpenSSL must all be x86_64.
+          # Default macos-15 is ARM64, whose OpenSSL cannot link into x64.
+          - os: macos-15-intel
             arch: x64
             platform: macOS
             artifact: FinceptTerminal-macOS-x64
@@ -151,12 +151,16 @@ jobs:
           echo "ZLIB_ROOT=$ZLIB_DIR" >> "$GITHUB_ENV"
           echo "OpenSSL installed at: $OPENSSL_DIR ; static zlib at: $ZLIB_DIR"
           ls "$OPENSSL_DIR/lib/libcrypto.lib" && echo "libcrypto.lib confirmed"
-          # vcpkg's static-md zlib ships the archive as "zs.lib", which stock
-          # CMake FindZLIB does not search for. Alias it to "zlib.lib" (a name
-          # FindZLIB looks for) so find_package(ZLIB) links the static archive.
+          # vcpkg static-md zlib may be named libzs.lib (as in CI #44819157845)
+          # or zs.lib. Use only known static archive names, not a wildcard.
           if [ ! -f "$ZLIB_DIR/lib/zlib.lib" ]; then
-            ALT="$(ls "$ZLIB_DIR"/lib/z*.lib 2>/dev/null | head -1 || true)"
-            if [ -n "$ALT" ]; then cp "$ALT" "$ZLIB_DIR/lib/zlib.lib"; echo "Aliased $(basename "$ALT") -> zlib.lib"; fi
+            for ALT in "$ZLIB_DIR/lib/libzs.lib" "$ZLIB_DIR/lib/zs.lib"; do
+              if [ -f "$ALT" ]; then
+                cp "$ALT" "$ZLIB_DIR/lib/zlib.lib"
+                echo "Aliased $(basename "$ALT") -> zlib.lib"
+                break
+              fi
+            done
           fi
           if [ ! -f "$ZLIB_DIR/lib/zlib.lib" ]; then
             echo "::error::static zlib archive not found in $ZLIB_DIR/lib"
@@ -317,9 +321,9 @@ jobs:
       # Exercise each of the freshly built binary's --selftest-* checks under Qt's
       # offscreen platform (no display / GPU needed). A non-zero exit fails the
       # job. Runs the build-tree binary (not the packaged AppImage / .app) so it
-      # needs no FUSE mount or codesigning. Skipped on cross-compiled targets
-      # (Windows arm64, macOS x64) whose binaries can't execute on the host
-      # runner's architecture. timeout-minutes bounds any unexpected hang.
+      # needs no FUSE mount or codesigning. Skip only Windows arm64, which
+      # cross-compiles on x64. macOS x64 now runs natively on Intel.
+      # timeout-minutes bounds any unexpected hang.
       #
       # The flag list used to be spelled out here and DRIFTED: main.cpp
       # dispatches 10 --selftest-* flags, this loop listed 9, so
@@ -327,7 +331,7 @@ jobs:
       # .github/scripts/ci_app_checks.sh, which prefers `--selftest-list` from
       # the binary itself and is shared with release.yml and build-pr.yml.
       - name: Run self-tests (headless)
-        if: "!(matrix.platform == 'Windows' && matrix.arch == 'arm64') && !(matrix.platform == 'macOS' && matrix.arch == 'x64')"
+        if: "!(matrix.platform == 'Windows' && matrix.arch == 'arm64')"
         shell: bash
         working-directory: fincept-qt
         timeout-minutes: 25
@@ -627,7 +631,7 @@ jobs:
           # Copy app resources and Python analytics scripts
           # ----------------------------------------------------------------
           cp -r resources dist/resources 2>/dev/null || true
-          bash .github/scripts/sync_scripts.sh scripts dist/scripts
+          bash "${GITHUB_WORKSPACE}/.github/scripts/sync_scripts.sh" scripts dist/scripts
 
           # ----------------------------------------------------------------
           # Final diagnostic — list everything that will be zipped
@@ -692,7 +696,7 @@ jobs:
           # ── Stage resources INSIDE the bundle (not as siblings) ───────────
           mkdir -p "${APP_BUNDLE}/Contents/Resources"
           cp -r resources "${APP_BUNDLE}/Contents/Resources/" 2>/dev/null || true
-          bash .github/scripts/sync_scripts.sh scripts "${APP_BUNDLE}/Contents/Resources/scripts"
+          bash "${GITHUB_WORKSPACE}/.github/scripts/sync_scripts.sh" scripts "${APP_BUNDLE}/Contents/Resources/scripts"
 
           # ── Embed Python.framework (tag builds only — skip on push) ───────
           if [ "$IS_TAG" = "true" ]; then
@@ -779,7 +783,7 @@ jobs:
 
           # Copy resources and scripts inside AppDir
           cp -r resources AppDir/usr/bin/resources 2>/dev/null || true
-          bash .github/scripts/sync_scripts.sh scripts AppDir/usr/bin/scripts
+          bash "${GITHUB_WORKSPACE}/.github/scripts/sync_scripts.sh" scripts AppDir/usr/bin/scripts
 
           # Desktop entry (required by linuxdeploy)
           cat > AppDir/usr/share/applications/fincept-terminal.desktop <<'EOF'
@@ -931,6 +935,13 @@ jobs:
     if: "!cancelled() && needs.build.result == 'success'"
 
     steps:
+      # This job does not inherit build-job checkouts. The downstream packaging
+      # script is a repository source file, not part of the downloaded artifact.
+      - name: Checkout packaging scripts
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Download macOS arm64
         uses: actions/download-artifact@v4
         with:
@@ -984,7 +995,7 @@ jobs:
           lipo -create "$ARM64_BIN" "$X64_BIN" -output dist/FinceptTerminal
           chmod +x dist/FinceptTerminal
           cp -r arm64/resources dist/resources 2>/dev/null || true
-          bash .github/scripts/sync_scripts.sh arm64/scripts dist/scripts
+          bash "${GITHUB_WORKSPACE}/.github/scripts/sync_scripts.sh" arm64/scripts dist/scripts
           file dist/FinceptTerminal
           lipo -info dist/FinceptTerminal
           ls -lh dist/FinceptTerminal

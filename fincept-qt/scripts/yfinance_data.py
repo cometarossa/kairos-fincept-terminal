@@ -1555,6 +1555,32 @@ def _daemon_dispatch(action, payload):
     return {"error": f"Unknown action: {action}"}
 
 
+def _qa_worker_runtime_metadata():
+    """Selftest-only, no I/O: report loaded package versions, never paths or provider text."""
+    if (os.environ.get("FINCEPT_PUBLIC_MCP_HISTORY_QA") != "SPY_5D_PUBLIC_READ" or
+            os.environ.get("FINCEPT_PUBLIC_QA_SANDBOX_VERIFIED") != "EPERM_EXTERNAL"):
+        return None
+
+    def safe_version(value):
+        # Never forward package metadata or raw exception text unvalidated.
+        return value if isinstance(value, str) and re.fullmatch(
+            r"[0-9]{1,3}(?:\.[0-9]{1,3}){1,3}", value
+        ) else "UNKNOWN"
+
+    try:
+        from importlib import metadata
+        curl_version = metadata.version("curl_cffi")
+    except Exception:
+        curl_version = None
+
+    return {
+        "python": safe_version(f"{sys.version_info.major}.{sys.version_info.minor}"),
+        "yfinance_loaded": safe_version(getattr(yf, "__version__", None)),
+        "curl_cffi_distribution": safe_version(curl_version),
+        "pandas_loaded": safe_version(getattr(pd, "__version__", None)),
+    }
+
+
 def run_daemon():
     """Main daemon loop — read frame, dispatch, write frame, repeat."""
     import io
@@ -1564,8 +1590,11 @@ def run_daemon():
     # Ready marker so the C++ host knows imports are done and the worker is
     # ready to accept requests. Uses the same framing.
     try:
-        ready = fincept_json.dumps_bytes({"ready": True, "pid": os.getpid()})
-        _daemon_write_frame(stdout, ready)
+        ready_data = {"ready": True, "pid": os.getpid()}
+        qa_runtime = _qa_worker_runtime_metadata()
+        if qa_runtime is not None:
+            ready_data["qa_runtime"] = qa_runtime
+        _daemon_write_frame(stdout, fincept_json.dumps_bytes(ready_data))
     except Exception:
         pass
 

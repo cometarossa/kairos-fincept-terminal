@@ -9,6 +9,9 @@
 #include <QDateTime>
 #include <QFileInfo>
 #include <QJsonDocument>
+#include <QRegularExpression>
+
+#include <cstdio>
 
 namespace fincept::python {
 
@@ -149,7 +152,8 @@ void PythonWorker::launch_process() {
     // Always use venv-numpy2 — yfinance lives there. Fall back to the
     // PythonRunner's resolved interpreter if the venv isn't present.
     QString python_exe = PythonSetupManager::instance().python_path(QStringLiteral("venv-numpy2"));
-    if (!QFileInfo::exists(python_exe))
+    const bool managed_numpy2 = QFileInfo::exists(python_exe);
+    if (!managed_numpy2)
         python_exe = runner.python_path();
     if (python_exe.isEmpty()) {
         LOG_WARN("PythonWorker", "No Python interpreter resolved — worker disabled");
@@ -196,6 +200,17 @@ void PythonWorker::launch_process() {
 
     read_buf_.clear();
     ready_ = false;
+    // No paths, usernames or environment values: only a fixed lane enum
+    // in the explicit no-broker public Yahoo native QA.
+    const bool public_history_qa =
+        QCoreApplication::arguments().contains(QStringLiteral("--selftest-mcp-server")) &&
+        qEnvironmentVariable("FINCEPT_PUBLIC_MCP_HISTORY_QA") == QLatin1String("SPY_5D_PUBLIC_READ") &&
+        qEnvironmentVariable("FINCEPT_PUBLIC_QA_SANDBOX_VERIFIED") == QLatin1String("EPERM_EXTERNAL");
+    if (public_history_qa) {
+        std::fprintf(stdout, "QA_YAHOO_WORKER_INTERPRETER_LANE=%s\n",
+                     managed_numpy2 ? "MANAGED_NUMPY2" : "RUNNER_FALLBACK");
+        std::fflush(stdout);
+    }
     LOG_INFO("PythonWorker", QString("Launching daemon: %1 %2 --daemon").arg(python_exe).arg(script_path));
     proc_->start(python_exe, {script_path, QStringLiteral("--daemon")});
     ready_watchdog_.start();
@@ -361,6 +376,23 @@ void PythonWorker::try_drain_frames() {
             ready_watchdog_.stop();
             restart_count_ = 0; // clean handshake resets the retry budget
             LOG_INFO("PythonWorker", QString("Daemon ready (pid=%1)").arg(obj.value("pid").toInt()));
+            const bool public_history_qa =
+                QCoreApplication::arguments().contains(QStringLiteral("--selftest-mcp-server")) &&
+                qEnvironmentVariable("FINCEPT_PUBLIC_MCP_HISTORY_QA") == QLatin1String("SPY_5D_PUBLIC_READ") &&
+                qEnvironmentVariable("FINCEPT_PUBLIC_QA_SANDBOX_VERIFIED") == QLatin1String("EPERM_EXTERNAL");
+            if (public_history_qa) {
+                const QJsonObject runtime = obj.value("qa_runtime").toObject();
+                const QRegularExpression safe_version(
+                    QStringLiteral("^[0-9]{1,3}(?:\\.[0-9]{1,3}){1,3}$"));
+                for (const char* key : {"python", "yfinance_loaded", "curl_cffi_distribution", "pandas_loaded"}) {
+                    const QString provided = runtime.value(QLatin1String(key)).toString();
+                    const QString version = safe_version.match(provided).hasMatch()
+                        ? provided : QStringLiteral("UNKNOWN");
+                    std::fprintf(stdout, "QA_YAHOO_WORKER_VERSION_%s=%s\n",
+                                 key, version.toUtf8().constData());
+                }
+                std::fflush(stdout);
+            }
             dispatch_queued();
             continue;
         }

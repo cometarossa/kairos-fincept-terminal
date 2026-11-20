@@ -935,6 +935,13 @@ jobs:
     if: "!cancelled() && needs.build.result == 'success'"
 
     steps:
+      # This job does not inherit build-job checkouts. The downstream packaging
+      # script is a repository source file, not part of the downloaded artifact.
+      - name: Checkout packaging scripts
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Download macOS arm64
         uses: actions/download-artifact@v4
         with:

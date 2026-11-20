@@ -33,6 +33,24 @@ workflow, not the Fincept application, brokers, data services or KAIROS authorit
    in all four existing call sites. The same absolute-path convention is
    already used in \`release.yml\`.
 
+
+## 2026-11-21 — Universal assembly checkout regression
+
+The macOS Universal job runs on **another** runner and does not inherit
+the five build jobs' checked-out files. Before this follow-up it attempted
+to invoke the repository-root packaging script without first checking out
+the repository. Even a five-platform compile PASS would have failed here.
+A read-only `actions/checkout@v4` (with `persist-credentials: false`)
+now precedes artifact downloads. The new offline regression reproduced
+the missing checkout (RED), then passed (GREEN).
+
+The already dispatched combined QA run
+[44834073612](https://github.com/cometarossa/kairos-fincept-terminal/actions/runs/44834073612)
+uses the **earlier** commit of #67 and does not contain this fix;
+its five build legs remain useful evidence, but it cannot certify final
+Universal assembly. New exact-head combined CI is still needed.
+
+
 ## Exact-source offline regression
 
 \`python3 -m unittest discover -s tests/fincept_original -p 'test_build_cpp_workflow_infrastructure.py' -v\`

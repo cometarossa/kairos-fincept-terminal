@@ -38,6 +38,16 @@ class BuildCppWorkflowInfrastructureTest(unittest.TestCase):
         self.assertIn("matrix.platform == 'Windows'", src[smoke + 1])
         self.assertNotIn("macOS", src[smoke + 1])
 
+    def test_universal_job_checks_out_repository_scripts(self):
+        src = lines()
+        start = src.index("  macos-universal:")
+        stop = src.index("  release:", start)
+        section = "\n".join(src[start:stop])
+        self.assertIn("uses: actions/checkout@v4", section)
+        self.assertLess(section.index("uses: actions/checkout@v4"),
+                        section.index("- name: Download macOS arm64"))
+        self.assertIn(".github/scripts/sync_scripts.sh", section)
+
     def test_all_packaging_paths_are_workspace_anchored(self):
         self.assertTrue(COPY_SCRIPT.is_file())
         calls = [s.strip() for s in lines() if s.lstrip().startswith("bash ")

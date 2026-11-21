@@ -332,7 +332,10 @@ jobs:
         \ \"${path}\")\" != \"${soname}\" ]; then\n    path=\"/usr/lib/x86_64-linux-gnu/${soname}\"\n  fi\n  if [ ! -e \"${path}\" ];\
         \ then\n    echo \"::error::${soname} not found on the runner \u2014 cannot bundle a consistent OpenSSL pair (#352)\" >&2\n\
         \    exit 1\n  fi\n  printf '%s' \"${path}\"\n}\nOPENSSL_ARGS=()\nfor _so in libssl.so.3 libcrypto.so.3; do\n  _path=$(resolve_soname\
-        \ \"${_so}\")\n  echo \"Bundling OpenSSL library: ${_path}\"\n  OPENSSL_ARGS+=(--library \"${_path}\")\ndone\n\n./linuxdeploy-x86_64.AppImage\
+        \ \"${_so}\")\n  echo \"Bundling OpenSSL library: ${_path}\"\n  OPENSSL_ARGS+=(--library \"${_path}\")\ndone\n\n# \u2500\u2500\
+        \ Headless QPA platform plugin: needed by packaged offline automation \u2500\u2500\nQT_OFFSCREEN_SRC=\"${QT_ROOT_DIR}/plugins/platforms/libqoffscreen.so\"\
+        \nif [ ! -s \"${QT_OFFSCREEN_SRC}\" ]; then\n  echo \"::error::Qt offscreen platform plugin missing from matching Qt installation\"\
+        \ >&2\n  exit 1\nfi\ninstall -D -m 0755 \"${QT_OFFSCREEN_SRC}\" AppDir/usr/plugins/platforms/libqoffscreen.so\n\n./linuxdeploy-x86_64.AppImage\
         \ \\\n  --appdir AppDir \\\n  --plugin qt \\\n  --output appimage \\\n  \"${OPENSSL_ARGS[@]}\" \\\n  2>&1 || true\n\n# \u2500\
         \u2500 Guard: never ship a half-bundled OpenSSL again (#352) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\
         SSL_BUNDLED=$(find AppDir -name 'libssl.so.3' -print -quit)\nCRYPTO_BUNDLED=$(find AppDir -name 'libcrypto.so.3' -print -quit)\n\
@@ -352,6 +355,29 @@ jobs:
         \  echo \"zsync file generated\"\nelse\n  sudo apt-get install -y zsync -qq 2>/dev/null || true\n  if command -v zsyncmake &>/dev/null;\
         \ then\n    zsyncmake dist/FinceptTerminal-Linux-x86_64.AppImage -o dist/FinceptTerminal-Linux-x86_64.AppImage.zsync\n    echo\
         \ \"zsync file generated\"\n  else\n    echo \"::warning::zsyncmake not available \u2014 delta updates disabled\"\n  fi\nfi\n"
+    - name: Verify packaged Linux AppImage in headless mode
+      if: runner.os == 'Linux'
+      working-directory: fincept-qt
+      timeout-minutes: 5
+      env:
+        APPIMAGE_EXTRACT_AND_RUN: '1'
+        QT_QPA_PLATFORM: offscreen
+        QT_OPENGL: software
+        QTWEBENGINE_DISABLE_SANDBOX: '1'
+        QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu --no-sandbox --disable-gpu-compositing
+      run: 'set -euo pipefail
+
+        APPIMAGE=dist/FinceptTerminal-Linux-x86_64.AppImage
+
+        [ -s "$APPIMAGE" ] || { echo "::error::Built Linux AppImage missing"; exit 1; }
+
+        chmod +x "$APPIMAGE"
+
+        # This executes the real packaged file, not the CMake build-tree binary.
+
+        timeout 180 "$APPIMAGE" --profile ci-packaged --selftest-tools
+
+        '
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:

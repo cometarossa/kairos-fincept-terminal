@@ -849,6 +849,14 @@ jobs:
             OPENSSL_ARGS+=(--library "${_path}")
           done
 
+          # ── Headless QPA platform plugin: needed by packaged offline automation ──
+          QT_OFFSCREEN_SRC="${QT_ROOT_DIR}/plugins/platforms/libqoffscreen.so"
+          if [ ! -s "${QT_OFFSCREEN_SRC}" ]; then
+            echo "::error::Qt offscreen platform plugin missing from matching Qt installation" >&2
+            exit 1
+          fi
+          install -D -m 0755 "${QT_OFFSCREEN_SRC}" AppDir/usr/plugins/platforms/libqoffscreen.so
+
           ./linuxdeploy-x86_64.AppImage \
             --appdir AppDir \
             --plugin qt \
@@ -909,6 +917,24 @@ jobs:
               echo "::warning::zsyncmake not available — delta updates disabled"
             fi
           fi
+
+      - name: Verify packaged Linux AppImage in headless mode
+        if: runner.os == 'Linux'
+        working-directory: fincept-qt
+        timeout-minutes: 5
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+          QT_QPA_PLATFORM: offscreen
+          QT_OPENGL: software
+          QTWEBENGINE_DISABLE_SANDBOX: "1"
+          QTWEBENGINE_CHROMIUM_FLAGS: "--disable-gpu --no-sandbox --disable-gpu-compositing"
+        run: |
+          set -euo pipefail
+          APPIMAGE=dist/FinceptTerminal-Linux-x86_64.AppImage
+          [ -s "$APPIMAGE" ] || { echo "::error::Built Linux AppImage missing"; exit 1; }
+          chmod +x "$APPIMAGE"
+          # Execute the actual packaged AppImage, not the build-tree binary.
+          timeout 180 "$APPIMAGE" --profile ci-packaged --selftest-tools
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

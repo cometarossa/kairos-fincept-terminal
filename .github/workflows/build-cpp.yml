@@ -779,7 +779,7 @@ jobs:
 
           # Copy resources and scripts inside AppDir
           cp -r resources AppDir/usr/bin/resources 2>/dev/null || true
-          bash .github/scripts/sync_scripts.sh scripts AppDir/usr/bin/scripts
+          bash "${GITHUB_WORKSPACE}/.github/scripts/sync_scripts.sh" scripts AppDir/usr/bin/scripts
 
           # Desktop entry (required by linuxdeploy)
           cat > AppDir/usr/share/applications/fincept-terminal.desktop <<'EOF'
@@ -792,16 +792,12 @@ jobs:
           EOF
 
           # App icon — use real icon if present, otherwise generate a valid
-          # 256×256 PNG via Python/Pillow (always present on ubuntu-latest runners).
-          # We avoid ImageMagick because its default security policy and
-          # missing-font fallbacks produced zero-byte PNGs that failed libpng's
-          # CRC check in linuxdeploy. `python3 -c` sidesteps the YAML-indented
-          # heredoc trap (Python rejects the leading spaces as IndentationError).
+          # Fallback icon: Python standard library only (no Pillow dependency).
           ICON_DEST="AppDir/usr/share/icons/hicolor/256x256/apps/fincept-terminal.png"
           if [ -f "resources/icons/app_icon_256.png" ]; then
             cp resources/icons/app_icon_256.png "${ICON_DEST}"
           else
-            python3 -c 'import sys; from PIL import Image, ImageDraw, ImageFont; img=Image.new("RGBA",(256,256),(26,26,46,255)); d=ImageDraw.Draw(img); f=ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",96) if __import__("os").path.exists("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf") else ImageFont.load_default(); d.text((128,128),"FT",fill=(255,255,255,255),font=f,anchor="mm"); img.save(sys.argv[1],"PNG")' "${ICON_DEST}"
+            python3 "${GITHUB_WORKSPACE}/.github/scripts/create_fallback_icon.py" "${ICON_DEST}"
           fi
           # Verify the file is a valid PNG before handing it to linuxdeploy.
           file "${ICON_DEST}"

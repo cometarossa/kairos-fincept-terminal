@@ -88,13 +88,10 @@ class OriginalQtNativeRuntimeTest(unittest.TestCase):
 
     def test_loopback_policy_denies_all_external_sockets(self):
         # No broker address is contacted. A denied socket to a fixed public
-        # probe address must be EPERM, while local-only bind+connect works.
+        # probe address must be EPERM. macOS Seatbelt can deny Python's local
+        # AF_INET bind even while the original Qt server CAN bind/connect;
+        # original --selftest-mcp-server independently verifies local IPC.
         script = """import errno, socket, sys
-s = socket.socket()
-s.bind(('127.0.0.1', 0)); s.listen(1)
-c = socket.socket(); c.settimeout(.5)
-c.connect(('127.0.0.1', s.getsockname()[1]))
-a, _ = s.accept(); a.close(); c.close(); s.close()
 external = socket.socket(); external.settimeout(.5)
 try:
     rc = external.connect_ex(('1.1.1.1', 443))
@@ -135,7 +132,15 @@ print('LOOPBACK_ONLY_EXTERNAL_DENIED')
                 )
                 self.assertEqual(p.returncode, 0, f"{flag} failed:\n{p.stdout[-1800:]}")
                 if flag == "--selftest-mcp-server":
-                    self.assertIn("41 passed, 0 failed", p.stdout)
+                    self.assertIn("46 passed, 0 failed", p.stdout)
+                    for required in (
+                        "synthetic quote test cache database is open",
+                        "synthetic quote was seeded without provider calls",
+                        "real get_quote MCP handler returns cached synthetic quote",
+                        "real get_quote preserves local receipt; market as-of remains unknown",
+                        "real get_quote denies clock, freshness, science and execution authority",
+                    ):
+                        self.assertIn("[PASS] " + required, p.stdout)
                 elif flag == "--selftest-tools":
                     self.assertIn("VERDICT: PASS", p.stdout)
 

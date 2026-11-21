@@ -1,0 +1,386 @@
+name: Fincept Linux x64 — native build and AppImage QA
+
+on:
+  pull_request:
+    paths:
+      - "fincept-qt/**"
+      - ".github/workflows/build-cpp.yml"
+      - ".github/workflows/build-linux-qa.yml"
+      - ".github/scripts/create_fallback_icon.py"
+      - "tests/fincept_original/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  BUILD_TYPE: Release
+  QT_VERSION: 6.8.3
+  QT_MODULES: qtcharts qtwebsockets qtmultimedia qtwebengine qtwebchannel qtpositioning qtserialport
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+        - os: ubuntu-22.04
+          arch: x64
+          platform: Linux
+          artifact: FinceptTerminal-Linux-x64
+          exe: FinceptTerminal
+          qt_arch: linux_gcc_64
+          cmake_extra: ''
+    runs-on: ${{ matrix.os }}
+    name: "Linux x64 \u2014 build, self-tests, AppImage"
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+    - name: Set up ccache
+      if: runner.os != 'Windows'
+      uses: hendrikmuhs/ccache-action@v1
+      with:
+        key: ${{ matrix.platform }}-${{ matrix.arch }}-${{ env.QT_VERSION }}
+        max-size: 500M
+        update-package-index: true
+    - name: Install system dependencies (Linux)
+      if: runner.os == 'Linux'
+      run: "sudo add-apt-repository universe -y\nsudo apt-get update -qq\nsudo apt-get install -y \\\n  cmake ninja-build gcc-12 g++-12\
+        \ \\\n  libssl-dev \\\n  libsecret-1-dev \\\n  libgl1-mesa-dev libglu1-mesa-dev \\\n  libxkbcommon-dev libxkbcommon-x11-0 libxkbcommon-x11-dev\
+        \ \\\n  libxcb-cursor0 libxcb-cursor-dev \\\n  libxcb-icccm4 libxcb-icccm4-dev \\\n  libxcb-image0 libxcb-image0-dev \\\n  libxcb-keysyms1\
+        \ libxcb-keysyms1-dev \\\n  libxcb-randr0 \\\n  libxcb-render-util0 libxcb-render-util0-dev \\\n  libxcb-shape0-dev libxcb-sync-dev\
+        \ libxcb-xfixes0-dev \\\n  libxcb-xinerama0 libxcb-xinerama0-dev libxcb-xkb1 \\\n  libdbus-1-dev libfontconfig1-dev libfreetype6-dev\
+        \ \\\n  pkg-config zip\necho \"CC=gcc-12\"  >> \"$GITHUB_ENV\"\necho \"CXX=g++-12\" >> \"$GITHUB_ENV\"\n"
+    - name: Install OpenSSL + zlib (Windows)
+      if: runner.os == 'Windows'
+      shell: bash
+      run: "set -euo pipefail\n# zlib is linked STATICALLY (x64-windows-static-md). See release.yml's\n# \"Install OpenSSL + zlib\"\
+        \ step for the full history: v4.1.0 shipped an\n# exe importing an unbundled \"z.dll\" because ZLIB_ROOT was built from\n# VCPKG_INSTALLATION_ROOT\
+        \ (backslashes, e.g. C:\\vcpkg), which mangled\n# the path FindZLIB consumed and let the link fall through to a stray\n# system\
+        \ zlib named z.dll. Fix: normalise slashes + static zlib + pass\n# ZLIB_ROOT/ZLIB_USE_STATIC_LIBS as -D cache vars at configure.\n\
+        VCPKG_ROOT=\"${VCPKG_INSTALLATION_ROOT:-C:/vcpkg}\"\nVCPKG_ROOT=\"${VCPKG_ROOT//\\\\//}\"   # backslashes -> forward slashes\
+        \ (the v4.1.0 bug)\necho \"Using vcpkg at: $VCPKG_ROOT\"\n\"$VCPKG_ROOT/vcpkg\" install openssl:x64-windows zlib:x64-windows-static-md\
+        \ --no-print-usage\nOPENSSL_DIR=\"$VCPKG_ROOT/installed/x64-windows\"\nZLIB_DIR=\"$VCPKG_ROOT/installed/x64-windows-static-md\"\
+        \necho \"OPENSSL_ROOT_DIR=$OPENSSL_DIR\" >> \"$GITHUB_ENV\"\necho \"ZLIB_ROOT=$ZLIB_DIR\" >> \"$GITHUB_ENV\"\necho \"OpenSSL\
+        \ installed at: $OPENSSL_DIR ; static zlib at: $ZLIB_DIR\"\nls \"$OPENSSL_DIR/lib/libcrypto.lib\" && echo \"libcrypto.lib confirmed\"\
+        \n# vcpkg's static-md zlib ships the archive as \"zs.lib\", which stock\n# CMake FindZLIB does not search for. Alias it to \"\
+        zlib.lib\" (a name\n# FindZLIB looks for) so find_package(ZLIB) links the static archive.\nif [ ! -f \"$ZLIB_DIR/lib/zlib.lib\"\
+        \ ]; then\n  ALT=\"$(ls \"$ZLIB_DIR\"/lib/z*.lib 2>/dev/null | head -1 || true)\"\n  if [ -n \"$ALT\" ]; then cp \"$ALT\" \"\
+        $ZLIB_DIR/lib/zlib.lib\"; echo \"Aliased $(basename \"$ALT\") -> zlib.lib\"; fi\nfi\nif [ ! -f \"$ZLIB_DIR/lib/zlib.lib\" ];\
+        \ then\n  echo \"::error::static zlib archive not found in $ZLIB_DIR/lib\"\n  ls -la \"$ZLIB_DIR/lib/\" 2>&1 || true\n  exit\
+        \ 1\nfi\necho \"static zlib confirmed: $ZLIB_DIR/lib/zlib.lib\"\n"
+    - name: Install Qt6
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: ${{ env.QT_VERSION }}
+        arch: ${{ matrix.qt_arch }}
+        modules: ${{ env.QT_MODULES }}
+        cache: true
+        cache-key-prefix: qt-${{ matrix.platform }}-${{ matrix.arch }}
+    - name: Install Qt6 host tools (Windows ARM64 only)
+      if: runner.os == 'Windows' && matrix.arch == 'arm64'
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: ${{ env.QT_VERSION }}
+        arch: win64_msvc2022_64
+        modules: ${{ env.QT_MODULES }}
+        cache: true
+        set-env: false
+        dir: ${{ runner.temp }}/qt-host
+    - name: Install yt-dlp
+      shell: bash
+      run: pip install yt-dlp
+    - name: Remove dangling Qt SQL driver plugin CMake configs
+      shell: bash
+      run: "set -euo pipefail\nSQL_CMAKE=\"${QT_ROOT_DIR}/lib/cmake/Qt6Sql\"\nif [ -d \"${SQL_CMAKE}\" ]; then\n  for drv in QMYSQLDriverPlugin\
+        \ QPSQLDriverPlugin QODBCDriverPlugin QMimerSQLDriverPlugin; do\n    rm -fv \"${SQL_CMAKE}/Qt6${drv}\"*.cmake || true\n  done\n\
+        else\n  echo \"::warning::${SQL_CMAKE} not found \u2014 skipping SQL plugin config cleanup\"\nfi\n"
+    - name: Configure CMake (Linux)
+      if: runner.os == 'Linux'
+      working-directory: fincept-qt
+      run: "cmake -B build -G Ninja \\\n  -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \\\n  -DCMAKE_PREFIX_PATH=\"${QT_ROOT_DIR}\" \\\n\
+        \  -DOPENSSL_ROOT_DIR=/usr \\\n  -DCMAKE_C_COMPILER_LAUNCHER=ccache \\\n  -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \\\n  -DFINCEPT_REQUIRE_BUNDLED_YTDLP=ON\
+        \ \\\n  ${{ matrix.cmake_extra }}\n"
+    - name: Configure CMake (Windows x64 / macOS x64 / macOS arm64)
+      if: (runner.os == 'Windows' && matrix.arch == 'x64') || runner.os == 'macOS'
+      shell: bash
+      working-directory: fincept-qt
+      run: "OPENSSL_ARG=\"\"\nif [ -n \"${OPENSSL_ROOT_DIR:-}\" ]; then\n  OPENSSL_ARG=\"-DOPENSSL_ROOT_DIR=${OPENSSL_ROOT_DIR}\"\n\
+        fi\n# ZLIB_ROOT is set only on Windows (static zlib via vcpkg); on macOS it\n# is empty so find_package(ZLIB) uses the system\
+        \ zlib as before.\nZLIB_ARG=\"\"\nif [ -n \"${ZLIB_ROOT:-}\" ]; then\n  ZLIB_ARG=\"-DZLIB_ROOT=${ZLIB_ROOT} -DZLIB_USE_STATIC_LIBS=ON\"\
+        \nfi\ncmake -B build \\\n  -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE }} \\\n  -DCMAKE_PREFIX_PATH=\"${QT_ROOT_DIR}\" \\\n  ${OPENSSL_ARG}\
+        \ \\\n  ${ZLIB_ARG} \\\n  -DFINCEPT_REQUIRE_BUNDLED_YTDLP=ON \\\n  ${{ runner.os == 'macOS' && '-DCMAKE_C_COMPILER_LAUNCHER=ccache\
+        \ -DCMAKE_CXX_COMPILER_LAUNCHER=ccache' || '' }} \\\n  ${{ matrix.cmake_extra }}\n"
+    - name: Configure CMake (Windows ARM64)
+      if: runner.os == 'Windows' && matrix.arch == 'arm64'
+      shell: bash
+      working-directory: fincept-qt
+      run: "HOST_QT=\"${{ runner.temp }}/qt-host/Qt/${{ env.QT_VERSION }}/msvc2022_64\"\nOPENSSL_ARG=\"\"\nif [ -n \"${OPENSSL_ROOT_DIR:-}\"\
+        \ ]; then\n  OPENSSL_ARG=\"-DOPENSSL_ROOT_DIR=${OPENSSL_ROOT_DIR}\"\nfi\nZLIB_ARG=\"\"\nif [ -n \"${ZLIB_ROOT:-}\" ]; then\n\
+        \  ZLIB_ARG=\"-DZLIB_ROOT=${ZLIB_ROOT} -DZLIB_USE_STATIC_LIBS=ON\"\nfi\ncmake -B build \\\n  -DCMAKE_BUILD_TYPE=${{ env.BUILD_TYPE\
+        \ }} \\\n  -DCMAKE_PREFIX_PATH=\"${QT_ROOT_DIR}\" \\\n  -DQT_HOST_PATH=\"${HOST_QT}\" \\\n  -T ClangCL \\\n  ${OPENSSL_ARG}\
+        \ \\\n  ${ZLIB_ARG} \\\n  -DFINCEPT_REQUIRE_BUNDLED_YTDLP=ON \\\n  ${{ matrix.cmake_extra }}\n"
+    - name: Build
+      shell: bash
+      working-directory: fincept-qt
+      run: cmake --build build --config ${{ env.BUILD_TYPE }} --parallel $(nproc 2>/dev/null || sysctl -n hw.logicalcpu 2>/dev/null
+        || echo 3)
+    - name: Verify build output
+      shell: bash
+      working-directory: fincept-qt
+      run: "if [ \"${{ runner.os }}\" == \"Windows\" ]; then\n  BINARY=\"build/Release/${{ matrix.exe }}\"\nelif [ \"${{ runner.os }}\"\
+        \ == \"macOS\" ]; then\n  # Qt on macOS produces a .app bundle; the binary is inside it.\n  # Try both plain binary and .app\
+        \ bundle locations.\n  if [ -f \"build/${{ matrix.exe }}\" ]; then\n    BINARY=\"build/${{ matrix.exe }}\"\n  elif [ -f \"build/${{\
+        \ matrix.exe }}.app/Contents/MacOS/${{ matrix.exe }}\" ]; then\n    BINARY=\"build/${{ matrix.exe }}.app/Contents/MacOS/${{\
+        \ matrix.exe }}\"\n  else\n    BINARY=\"build/${{ matrix.exe }}\"  # will fail the check below with a clear error\n  fi\nelse\n\
+        \  BINARY=\"build/${{ matrix.exe }}\"\nfi\nif [ ! -f \"$BINARY\" ]; then\n  echo \"::error::Binary not found \u2014 searched:\
+        \ build/${{ matrix.exe }} and build/${{ matrix.exe }}.app/Contents/MacOS/${{ matrix.exe }}\"\n  echo \"Build directory contents:\"\
+        \n  find build -maxdepth 3 -name \"${{ matrix.exe }}\" 2>/dev/null || true\n  exit 1\nfi\necho \"Binary verified: $BINARY ($(du\
+        \ -sh \"$BINARY\" | cut -f1))\"\n"
+    - name: Run self-tests (headless)
+      if: '!(matrix.platform == ''Windows'' && matrix.arch == ''arm64'') && !(matrix.platform == ''macOS'' && matrix.arch == ''x64'')'
+      shell: bash
+      working-directory: fincept-qt
+      timeout-minutes: 25
+      run: "set -euo pipefail\nif [ \"${{ runner.os }}\" == \"Windows\" ]; then\n  BINARY=\"build/Release/${{ matrix.exe }}\"\nelif\
+        \ [ \"${{ runner.os }}\" == \"macOS\" ] && [ ! -f \"build/${{ matrix.exe }}\" ]; then\n  BINARY=\"build/${{ matrix.exe }}.app/Contents/MacOS/${{\
+        \ matrix.exe }}\"\nelse\n  BINARY=\"build/${{ matrix.exe }}\"\nfi\nexport LD_LIBRARY_PATH=\"${QT_ROOT_DIR}/lib:${LD_LIBRARY_PATH:-}\"\
+        \nbash ../.github/scripts/ci_app_checks.sh selftests \"$BINARY\" ci\n"
+    - name: Package (Windows)
+      if: runner.os == 'Windows'
+      shell: bash
+      working-directory: fincept-qt
+      run: "set -euo pipefail\nmkdir -p dist\n\n# Copy main executable\ncp build/Release/${{ matrix.exe }} dist/\n\n# Copy qgeoview.dll\
+        \ (built by FetchContent, placed next to exe by post-build command)\nif [ -f \"build/Release/qgeoview.dll\" ]; then\n  cp build/Release/qgeoview.dll\
+        \ dist/\n  echo \"Copied qgeoview.dll\"\nelse\n  echo \"::warning::qgeoview.dll not found in build/Release \u2014 map widget\
+        \ may fail\"\nfi\n\n# ----------------------------------------------------------------\n# windeployqt\n# Always an x64 host\
+        \ tool. For ARM64 cross-compiled builds\n# QT_ROOT_DIR points to the ARM64 kit; windeployqt lives in x64.\n# ----------------------------------------------------------------\n\
+        WDQT=\"${QT_ROOT_DIR}/bin/windeployqt.exe\"\nif [ ! -f \"$WDQT\" ]; then\n  WDQT=\"${QT_ROOT_DIR}/../msvc2022_64/bin/windeployqt.exe\"\
+        \nfi\n\nif [ -f \"$WDQT\" ]; then\n  echo \"Running windeployqt: $WDQT\"\n  \"$WDQT\" \\\n    --release \\\n    --no-translations\
+        \ \\\n    --compiler-runtime \\\n    --include-soft-plugins \\\n    --force \\\n    dist/${{ matrix.exe }}\nelse\n  echo \"\
+        ::warning::windeployqt not found \u2014 Qt DLLs not bundled\"\nfi\n\nQT_BIN=\"${QT_ROOT_DIR}/bin\"\nQT_PLUGINS=\"${QT_ROOT_DIR}/plugins\"\
+        \n\n# ----------------------------------------------------------------\n# Qt Core DLLs (windeployqt should handle these, but\
+        \ belt+suspenders)\n# ----------------------------------------------------------------\nfor qt_dll in \\\n  Qt6Core.dll Qt6Gui.dll\
+        \ Qt6Widgets.dll \\\n  Qt6Charts.dll Qt6PrintSupport.dll \\\n  Qt6Network.dll Qt6Sql.dll Qt6Concurrent.dll \\\n  Qt6WebSockets.dll\
+        \ \\\n  Qt6Multimedia.dll \\\n  Qt6OpenGL.dll Qt6OpenGLWidgets.dll \\\n  Qt6Svg.dll Qt6Xml.dll; do\n  if [ -f \"${QT_BIN}/${qt_dll}\"\
+        \ ] && [ ! -f \"dist/${qt_dll}\" ]; then\n    cp \"${QT_BIN}/${qt_dll}\" dist/\n    echo \"Copied ${qt_dll}\"\n  fi\ndone\n\n\
+        # ----------------------------------------------------------------\n# OpenSSL DLLs \u2014 Qt6::Network requires these for HTTPS.\n\
+        # Qt 6.x ships them in its own bin/ directory.\n# ----------------------------------------------------------------\nfor ssl_dll\
+        \ in \\\n  libssl-3-x64.dll libcrypto-3-x64.dll \\\n  libssl-3.dll     libcrypto-3.dll \\\n  libssl-1_1-x64.dll libcrypto-1_1-x64.dll;\
+        \ do\n  if [ -f \"${QT_BIN}/${ssl_dll}\" ] && [ ! -f \"dist/${ssl_dll}\" ]; then\n    cp \"${QT_BIN}/${ssl_dll}\" dist/\n  \
+        \  echo \"Copied ${ssl_dll}\"\n  fi\ndone\n\n# zlib \u2014 the app now links zlib STATICALLY (x64-windows-static-md), so\n#\
+        \ there is no runtime zlib DLL to ship. This loop is a harmless fallback\n# for any transitive dynamic-zlib need; ZLIB_ROOT\
+        \ is the static-md dir\n# and has no bin/*.dll, so it normally copies nothing. See release.yml.\nfor zlib_dll in zlib1.dll;\
+        \ do\n  if [ -n \"${ZLIB_ROOT:-}\" ] && [ -f \"${ZLIB_ROOT}/bin/${zlib_dll}\" ] && [ ! -f \"dist/${zlib_dll}\" ]; then\n   \
+        \ cp \"${ZLIB_ROOT}/bin/${zlib_dll}\" dist/\n    echo \"Copied ${zlib_dll}\"\n  elif [ -f \"${QT_BIN}/${zlib_dll}\" ] && [ !\
+        \ -f \"dist/${zlib_dll}\" ]; then\n    cp \"${QT_BIN}/${zlib_dll}\" dist/\n    echo \"Copied ${zlib_dll}\"\n  fi\ndone\n\n#\
+        \ ----------------------------------------------------------------\n# MSVC Runtime DLLs \u2014 --compiler-runtime covers most,\
+        \ but copy\n# from System32 as a fallback for anything missed.\n# msvcp170 / vcruntime140_2 are the VS2022 v17.x toolset DLLs.\n\
+        # ----------------------------------------------------------------\nfor vcrt_dll in \\\n  vcruntime140.dll vcruntime140_1.dll\
+        \ vcruntime140_2.dll \\\n  msvcp140.dll msvcp140_1.dll msvcp140_2.dll \\\n  msvcp170.dll \\\n  concrt140.dll vccorlib140.dll;\
+        \ do\n  SYS32=\"/c/Windows/System32/${vcrt_dll}\"\n  if [ -f \"$SYS32\" ] && [ ! -f \"dist/${vcrt_dll}\" ]; then\n    cp \"\
+        $SYS32\" dist/\n    echo \"Copied MSVC runtime ${vcrt_dll}\"\n  fi\ndone\n\n# ----------------------------------------------------------------\n\
+        # Qt Platform Plugin \u2014 mandatory, app won't start without it\n# ----------------------------------------------------------------\n\
+        mkdir -p dist/platforms\nfor plat_dll in qwindows.dll qwindowsd.dll; do\n  if [ -f \"${QT_PLUGINS}/platforms/${plat_dll}\" ]\
+        \ && [ ! -f \"dist/platforms/${plat_dll}\" ]; then\n    cp \"${QT_PLUGINS}/platforms/${plat_dll}\" dist/platforms/\n    echo\
+        \ \"Copied platforms/${plat_dll}\"\n  fi\ndone\n\n# ----------------------------------------------------------------\n# Qt SQL\
+        \ Drivers \u2014 qsqlite required for SQLite database\n# ----------------------------------------------------------------\n\
+        mkdir -p dist/sqldrivers\nfor sql_dll in qsqlite.dll qsqlodbc.dll; do\n  if [ -f \"${QT_PLUGINS}/sqldrivers/${sql_dll}\" ] &&\
+        \ [ ! -f \"dist/sqldrivers/${sql_dll}\" ]; then\n    cp \"${QT_PLUGINS}/sqldrivers/${sql_dll}\" dist/sqldrivers/\n    echo \"\
+        Copied sqldrivers/${sql_dll}\"\n  fi\ndone\n\n# ----------------------------------------------------------------\n# Qt Image\
+        \ Format Plugins \u2014 needed to render PNG/JPG/SVG/GIF/ICO\n# in the UI (logos, icons, chart exports)\n# ----------------------------------------------------------------\n\
+        mkdir -p dist/imageformats\nfor img_dll in \\\n  qbmp.dll qgif.dll qico.dll qjpeg.dll \\\n  qpng.dll qsvg.dll qtga.dll qtiff.dll\
+        \ qwbmp.dll qwebp.dll; do\n  if [ -f \"${QT_PLUGINS}/imageformats/${img_dll}\" ] && [ ! -f \"dist/imageformats/${img_dll}\"\
+        \ ]; then\n    cp \"${QT_PLUGINS}/imageformats/${img_dll}\" dist/imageformats/\n    echo \"Copied imageformats/${img_dll}\"\n\
+        \  fi\ndone\n\n# ----------------------------------------------------------------\n# Qt Icon Engine Plugin \u2014 renders .svg\
+        \ icons in toolbars/menus\n# ----------------------------------------------------------------\nmkdir -p dist/iconengines\nif\
+        \ [ -f \"${QT_PLUGINS}/iconengines/qsvgicon.dll\" ] && [ ! -f \"dist/iconengines/qsvgicon.dll\" ]; then\n  cp \"${QT_PLUGINS}/iconengines/qsvgicon.dll\"\
+        \ dist/iconengines/\n  echo \"Copied iconengines/qsvgicon.dll\"\nfi\n\n# ----------------------------------------------------------------\n\
+        # Qt Style Plugins \u2014 Fusion style (cross-platform look)\n# ----------------------------------------------------------------\n\
+        mkdir -p dist/styles\nfor style_dll in qwindowsvistastyle.dll; do\n  if [ -f \"${QT_PLUGINS}/styles/${style_dll}\" ] && [ !\
+        \ -f \"dist/styles/${style_dll}\" ]; then\n    cp \"${QT_PLUGINS}/styles/${style_dll}\" dist/styles/\n    echo \"Copied styles/${style_dll}\"\
+        \n  fi\ndone\n\n# ----------------------------------------------------------------\n# Qt Network TLS Backend Plugin \u2014 required\
+        \ for HTTPS on Qt 6.2+\n# (replaces old OpenSSL linkage model)\n# ----------------------------------------------------------------\n\
+        mkdir -p dist/tls\nfor tls_dll in qschannelbackend.dll qopensslbackend.dll qcertonlybackend.dll; do\n  if [ -f \"${QT_PLUGINS}/tls/${tls_dll}\"\
+        \ ] && [ ! -f \"dist/tls/${tls_dll}\" ]; then\n    cp \"${QT_PLUGINS}/tls/${tls_dll}\" dist/tls/\n    echo \"Copied tls/${tls_dll}\"\
+        \n  fi\ndone\n\n# ----------------------------------------------------------------\n# Qt Multimedia Plugins \u2014 audio/video\
+        \ backend (Windows MF + FFMPEG)\n# ----------------------------------------------------------------\nif [ -d \"${QT_PLUGINS}/multimedia\"\
+        \ ]; then\n  mkdir -p dist/multimedia\n  for media_dll in windowsmediafoundation.dll ffmpegmediaplugin.dll; do\n    if [ -f\
+        \ \"${QT_PLUGINS}/multimedia/${media_dll}\" ] && [ ! -f \"dist/multimedia/${media_dll}\" ]; then\n      cp \"${QT_PLUGINS}/multimedia/${media_dll}\"\
+        \ dist/multimedia/\n      echo \"Copied multimedia/${media_dll}\"\n    fi\n  done\nfi\n\n# ----------------------------------------------------------------\n\
+        # Qt MultimediaWidgets DLL \u2014 required when HAS_QT_MULTIMEDIA is set\n# (Qt6Multimedia.dll is in the core list above; this\
+        \ is the separate\n#  widgets integration DLL that windeployqt may miss)\n# ----------------------------------------------------------------\n\
+        if [ -f \"${QT_BIN}/Qt6MultimediaWidgets.dll\" ] && [ ! -f \"dist/Qt6MultimediaWidgets.dll\" ]; then\n  cp \"${QT_BIN}/Qt6MultimediaWidgets.dll\"\
+        \ dist/\n  echo \"Copied Qt6MultimediaWidgets.dll\"\nfi\n\n# ----------------------------------------------------------------\n\
+        # Qt TextToSpeech DLL + SAPI plugin (Windows TTS backend)\n# ----------------------------------------------------------------\n\
+        if [ -f \"${QT_BIN}/Qt6TextToSpeech.dll\" ] && [ ! -f \"dist/Qt6TextToSpeech.dll\" ]; then\n  cp \"${QT_BIN}/Qt6TextToSpeech.dll\"\
+        \ dist/\n  echo \"Copied Qt6TextToSpeech.dll\"\nfi\nif [ -d \"${QT_PLUGINS}/texttospeech\" ]; then\n  mkdir -p dist/texttospeech\n\
+        \  cp -n \"${QT_PLUGINS}/texttospeech/\"*.dll dist/texttospeech/ 2>/dev/null || true\n  echo \"Copied texttospeech plugins\"\
+        \nfi\n\n# ----------------------------------------------------------------\n# Qt Network Information plugins (Qt 6.2+ \u2014\
+        \ used by QNetworkInformation)\n# ----------------------------------------------------------------\nif [ -d \"${QT_PLUGINS}/networkinformation\"\
+        \ ]; then\n  mkdir -p dist/networkinformation\n  cp -n \"${QT_PLUGINS}/networkinformation/\"*.dll dist/networkinformation/ 2>/dev/null\
+        \ || true\n  echo \"Copied networkinformation plugins\"\nfi\n\n# ----------------------------------------------------------------\n\
+        # Qt Platform Input Contexts \u2014 IME support (CJK, on-screen keyboard)\n# ----------------------------------------------------------------\n\
+        if [ -d \"${QT_PLUGINS}/platforminputcontexts\" ]; then\n  mkdir -p dist/platforminputcontexts\n  cp -n \"${QT_PLUGINS}/platforminputcontexts/\"\
+        *.dll dist/platforminputcontexts/ 2>/dev/null || true\n  echo \"Copied platforminputcontexts plugins\"\nfi\n\n# ----------------------------------------------------------------\n\
+        # Qt Print Support Plugin \u2014 required by Qt6::PrintSupport\n# (the DLL is in the core list; this is the Windows printer\
+        \ backend plugin)\n# ----------------------------------------------------------------\nif [ -d \"${QT_PLUGINS}/printsupport\"\
+        \ ]; then\n  mkdir -p dist/printsupport\n  cp -n \"${QT_PLUGINS}/printsupport/\"*.dll dist/printsupport/ 2>/dev/null || true\n\
+        \  echo \"Copied printsupport plugins\"\nfi\n\n# ----------------------------------------------------------------\n# Qt Generic\
+        \ Plugins (touch/tablet input)\n# ----------------------------------------------------------------\nif [ -d \"${QT_PLUGINS}/generic\"\
+        \ ]; then\n  mkdir -p dist/generic\n  cp -n \"${QT_PLUGINS}/generic/\"*.dll dist/generic/ 2>/dev/null || true\nfi\n\n# ----------------------------------------------------------------\n\
+        # Direct3D compiler + OpenGL SW fallback\n# Needed on machines without a proper GPU driver (VMs, headless CI).\n# dxcompiler.dll\
+        \ + dxil.dll: Qt 6.6+ D3D12 backend (DXC shader compiler).\n# ----------------------------------------------------------------\n\
+        for d3d_dll in \\\n  d3dcompiler_47.dll opengl32sw.dll libEGL.dll libGLESv2.dll \\\n  dxcompiler.dll dxil.dll; do\n  if [ -f\
+        \ \"${QT_BIN}/${d3d_dll}\" ] && [ ! -f \"dist/${d3d_dll}\" ]; then\n    cp \"${QT_BIN}/${d3d_dll}\" dist/\n    echo \"Copied\
+        \ ${d3d_dll}\"\n  fi\ndone\n\n# ----------------------------------------------------------------\n# ICU DLLs \u2014 Qt 6 on\
+        \ Windows ships its own ICU for Unicode support\n# ----------------------------------------------------------------\nfor icu_dll\
+        \ in \"${QT_BIN}\"/icu*.dll; do\n  base=$(basename \"$icu_dll\")\n  if [ -f \"$icu_dll\" ] && [ ! -f \"dist/${base}\" ]; then\n\
+        \    cp \"$icu_dll\" dist/\n    echo \"Copied ${base}\"\n  fi\ndone\n\n# ----------------------------------------------------------------\n\
+        # qt.conf \u2014 pins plugin and data paths relative to the executable.\n# Without this, Qt falls back to hardcoded build-time\
+        \ paths which\n# don't exist on a clean machine and can cause plugin load failures.\n# ----------------------------------------------------------------\n\
+        printf '[Paths]\\nPrefix = .\\nPlugins = .\\nLibraries = .\\n' > dist/qt.conf\n\n# ----------------------------------------------------------------\n\
+        # Copy app resources and Python analytics scripts\n# ----------------------------------------------------------------\ncp -r\
+        \ resources dist/resources 2>/dev/null || true\nbash .github/scripts/sync_scripts.sh scripts dist/scripts\n\n# ----------------------------------------------------------------\n\
+        # Final diagnostic \u2014 list everything that will be zipped\n# ----------------------------------------------------------------\n\
+        echo \"\"\necho \"=== dist/ contents ($(find dist -type f | wc -l) files) ===\"\nfind dist -type f | sort\n"
+    - name: Package (macOS)
+      if: runner.os == 'macOS'
+      working-directory: fincept-qt
+      run: "set -euo pipefail\nmkdir -p dist\nMACDEPLOYQT=\"${QT_ROOT_DIR}/bin/macdeployqt\"\nIS_TAG=\"${{ startsWith(github.ref, 'refs/tags/')\
+        \ || github.event_name == 'workflow_dispatch' }}\"\n\n# \u2500\u2500 Locate or synthesize .app bundle \u2500\u2500\u2500\u2500\
+        \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+        \u2500\u2500\u2500\u2500\u2500\nif [ -d \"build/${{ matrix.exe }}.app\" ]; then\n  APP_BUNDLE=\"build/${{ matrix.exe }}.app\"\
+        \nelse\n  APP_BUNDLE=\"build/${{ matrix.exe }}.app\"\n  mkdir -p \"${APP_BUNDLE}/Contents/MacOS\"\n  cp \"build/${{ matrix.exe\
+        \ }}\" \"${APP_BUNDLE}/Contents/MacOS/${{ matrix.exe }}\"\n  chmod +x \"${APP_BUNDLE}/Contents/MacOS/${{ matrix.exe }}\"\n \
+        \ # Version comes from CMakeLists.txt, never a literal \u2014 a hardcoded\n  # 4.3.0 here shipped a bundle whose CFBundleVersion\
+        \ disagreed with\n  # the binary the moment the project version moved, which breaks the\n  # auto-updater's version comparison.\
+        \ Heredoc delimiter is unquoted\n  # (<<PLIST, not <<'PLIST') so ${VERSION} interpolates.\n  VERSION=$(grep -Eo 'project\\(FinceptTerminal\
+        \ VERSION [0-9]+\\.[0-9]+\\.[0-9]+' CMakeLists.txt | awk '{print $3}')\n  [ -n \"${VERSION}\" ] || { echo \"::error::Could not\
+        \ parse VERSION from CMakeLists.txt\"; exit 1; }\n  cat > \"${APP_BUNDLE}/Contents/Info.plist\" <<PLIST\n<?xml version=\"1.0\"\
+        \ encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\"\
+        >\n<plist version=\"1.0\"><dict>\n  <key>CFBundleExecutable</key><string>FinceptTerminal</string>\n  <key>CFBundleIdentifier</key><string>com.fincept.terminal</string>\n\
+        \  <key>CFBundleName</key><string>FinceptTerminal</string>\n  <key>CFBundlePackageType</key><string>APPL</string>\n  <key>CFBundleShortVersionString</key><string>${VERSION}</string>\n\
+        \  <key>CFBundleVersion</key><string>${VERSION}</string>\n  <key>LSMinimumSystemVersion</key><string>13.0</string>\n  <key>NSHighResolutionCapable</key><true/>\n\
+        </dict></plist>\nPLIST\nfi\n\n# \u2500\u2500 Stage resources INSIDE the bundle (not as siblings) \u2500\u2500\u2500\u2500\u2500\
+        \u2500\u2500\u2500\u2500\u2500\u2500\nmkdir -p \"${APP_BUNDLE}/Contents/Resources\"\ncp -r resources \"${APP_BUNDLE}/Contents/Resources/\"\
+        \ 2>/dev/null || true\nbash .github/scripts/sync_scripts.sh scripts \"${APP_BUNDLE}/Contents/Resources/scripts\"\n\n# \u2500\
+        \u2500 Embed Python.framework (tag builds only \u2014 skip on push) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\nif [ \"$IS_TAG\"\
+        \ = \"true\" ]; then\n  PY_FRAMEWORK=\"\"\n  for candidate in \\\n    \"/Library/Frameworks/Python.framework\" \\\n    \"$(brew\
+        \ --prefix python@3.12 2>/dev/null)/Frameworks/Python.framework\" \\\n    \"$(brew --prefix python3 2>/dev/null)/Frameworks/Python.framework\"\
+        ; do\n    [ -d \"${candidate}/Versions\" ] && { PY_FRAMEWORK=\"${candidate}\"; break; }\n  done\n  BUNDLE_FRAMEWORKS=\"${APP_BUNDLE}/Contents/Frameworks\"\
+        \n  mkdir -p \"${BUNDLE_FRAMEWORKS}\"\n  if [ -n \"${PY_FRAMEWORK}\" ]; then\n    echo \"Embedding Python.framework from: ${PY_FRAMEWORK}\"\
+        \n    rsync -a --copy-unsafe-links \"${PY_FRAMEWORK}/\" \"${BUNDLE_FRAMEWORKS}/Python.framework/\" 2>/dev/null || \\\n     \
+        \ cp -R \"${PY_FRAMEWORK}\" \"${BUNDLE_FRAMEWORKS}/\" 2>/dev/null || true\n    find \"${BUNDLE_FRAMEWORKS}/Python.framework\"\
+        \ -name \"PrivateHeaders\" -type l \\\n      ! -exec test -e {} \\; -delete 2>/dev/null || true\n    PY_VER=\"$(python3 -c 'import\
+        \ sys; print(f\"{sys.version_info.major}.{sys.version_info.minor}\")')\"\n    ln -sf \"../Frameworks/Python.framework/Versions/${PY_VER}/bin/python${PY_VER}\"\
+        \ \\\n           \"${APP_BUNDLE}/Contents/MacOS/python3\" 2>/dev/null || true\n  else\n    echo \"::warning::Python.framework\
+        \ not found \u2014 bundle will rely on system python\"\n  fi\nfi\n\n# \u2500\u2500 Run macdeployqt on the fully staged bundle\
+        \ (tag builds only) \u2500\u2500\nif [ \"$IS_TAG\" = \"true\" ] && [ -x \"$MACDEPLOYQT\" ]; then\n  echo \"Running macdeployqt\
+        \ on ${APP_BUNDLE}\"\n  \"$MACDEPLOYQT\" \"${APP_BUNDLE}\" -verbose=1 || \\\n    echo \"::warning::macdeployqt exited non-zero\
+        \ \u2014 continuing to codesign\"\nfi\n\n# \u2500\u2500 Deep ad-hoc codesign (tag builds only) \u2014 fix for issue #139 \u2500\
+        \u2500\u2500\n# Strip every signature leaf-to-root, then re-sign whole bundle with\n# the ad-hoc identity (\"-\"). Do NOT pass\
+        \ --preserve-metadata: there\n# are no prior entitlements to preserve on a fresh bundle and the\n# flag errors out on resource-fork\
+        \ detritus left by macdeployqt.\nif [ \"$IS_TAG\" = \"true\" ]; then\n  echo \"Stripping existing signatures...\"\n  find \"\
+        ${APP_BUNDLE}\" -type f \\( -name \"*.dylib\" -o -name \"*.so\" -o -perm +111 \\) 2>/dev/null | \\\n    while read -r f; do\n\
+        \      if file \"$f\" 2>/dev/null | grep -q \"Mach-O\"; then\n        codesign --remove-signature \"$f\" 2>/dev/null || true\n\
+        \      fi\n    done\n  codesign --remove-signature \"${APP_BUNDLE}\" 2>/dev/null || true\n\n  echo \"Re-signing bundle ad-hoc\
+        \ (deep)...\"\n  codesign --force --deep --sign - --timestamp=none \"${APP_BUNDLE}\"\n\n  echo \"Verifying signature...\"\n\
+        \  codesign --verify --deep --strict --verbose=2 \"${APP_BUNDLE}\" || {\n    echo \"::error::Bundle verification failed\"\n\
+        \    codesign --display --deep --verbose=4 \"${APP_BUNDLE}\" || true\n    exit 1\n  }\nfi\n\n# \u2500\u2500 Copy signed bundle\
+        \ to dist/ \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+        \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\ncp -R \"${APP_BUNDLE}\" dist/\n\
+        # Tar to preserve execute permissions (upload-artifact uses zip which strips them)\ntar -czf dist.tar.gz -C dist .\n"
+    - name: Package (Linux)
+      if: runner.os == 'Linux'
+      working-directory: fincept-qt
+      run: "set -euo pipefail\n\n# \u2500\u2500 Download linuxdeploy + Qt plugin \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+        \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nwget\
+        \ -q \"https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage\"\nwget -q \"https://github.com/linuxdeploy/linuxdeploy-plugin-qt/releases/download/continuous/linuxdeploy-plugin-qt-x86_64.AppImage\"\
+        \nchmod +x linuxdeploy-x86_64.AppImage linuxdeploy-plugin-qt-x86_64.AppImage\n\n# \u2500\u2500 Build AppDir structure \u2500\
+        \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+        \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nmkdir -p AppDir/usr/bin\n\
+        mkdir -p AppDir/usr/share/applications\nmkdir -p AppDir/usr/share/icons/hicolor/256x256/apps\n\ncp build/${{ matrix.exe }} AppDir/usr/bin/\n\
+        chmod +x AppDir/usr/bin/${{ matrix.exe }}\n\n# Copy resources and scripts inside AppDir\ncp -r resources AppDir/usr/bin/resources\
+        \ 2>/dev/null || true\nbash \"${GITHUB_WORKSPACE}/.github/scripts/sync_scripts.sh\" scripts AppDir/usr/bin/scripts\n\n# Desktop\
+        \ entry (required by linuxdeploy)\ncat > AppDir/usr/share/applications/fincept-terminal.desktop <<'EOF'\n[Desktop Entry]\nName=Fincept\
+        \ Terminal\nExec=FinceptTerminal\nIcon=fincept-terminal\nType=Application\nCategories=Finance;\nEOF\n\n# App icon \u2014 use\
+        \ real icon if present, otherwise generate a valid\n# Fallback icon: Python standard library only (no Pillow dependency).\n\
+        ICON_DEST=\"AppDir/usr/share/icons/hicolor/256x256/apps/fincept-terminal.png\"\nif [ -f \"resources/icons/app_icon_256.png\"\
+        \ ]; then\n  cp resources/icons/app_icon_256.png \"${ICON_DEST}\"\nelse\n  python3 \"${GITHUB_WORKSPACE}/.github/scripts/create_fallback_icon.py\"\
+        \ \"${ICON_DEST}\"\nfi\n# Verify the file is a valid PNG before handing it to linuxdeploy.\nfile \"${ICON_DEST}\"\n[ -s \"${ICON_DEST}\"\
+        \ ] || { echo \"::error::Icon is empty or missing\"; exit 1; }\n\n# \u2500\u2500 Strip unused Qt SQL driver plugins \u2500\u2500\
+        \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+        \u2500\u2500\u2500\u2500\n# We only use SQLite. linuxdeploy-plugin-qt walks every plugin in\n# Qt's sqldrivers/ folder and tries\
+        \ to resolve its dependencies \u2014\n# the Mimer plugin pulls in libmimerapi.so, which isn't installed\n# on the runner and\
+        \ causes the deploy step to fail.\nQT_SQLDRIVERS=\"${QT_ROOT_DIR:-$(dirname $(which qmake6 2>/dev/null || which qmake))/..}/plugins/sqldrivers\"\
+        \nif [ -d \"${QT_SQLDRIVERS}\" ]; then\n  rm -f \"${QT_SQLDRIVERS}/libqsqlmimer.so\" \\\n        \"${QT_SQLDRIVERS}/libqsqlodbc.so\"\
+        \ \\\n        \"${QT_SQLDRIVERS}/libqsqlpsql.so\" \\\n        \"${QT_SQLDRIVERS}/libqsqlmysql.so\"\nfi\n\n# \u2500\u2500 Build\
+        \ AppImage \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+        \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+        \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n# UPDATE_INFORMATION embeds zsync update URL so AppImageUpdate can\n# fetch\
+        \ deltas automatically from the GitHub release.\nexport QMAKE=$(which qmake6 || which qmake)\nexport OUTPUT=\"FinceptTerminal-Linux-x86_64.AppImage\"\
+        \nexport UPDATE_INFORMATION=\"gh-releases-zsync|Fincept-Corporation|FinceptTerminal|latest|FinceptTerminal-Linux-x86_64.AppImage.zsync\"\
+        \n\n# \u2500\u2500 OpenSSL must be bundled as a MATCHED PAIR (#352) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\
+        \u2500\u2500\u2500\u2500\u2500\n# The app only calls libcrypto APIs, so ld's --as-needed drops\n# libssl.so.3 from DT_NEEDED\
+        \ and linuxdeploy (which walks DT_NEEDED)\n# bundled libcrypto.so.3 alone. Qt then dlopen()s the HOST libssl.so.3,\n# which\
+        \ needs OPENSSL_3.3.0 from the stale bundled libcrypto 3.0.2:\n#   qt.tlsbackend.ossl: Failed to load libssl/libcrypto  \u2192\
+        \ all HTTPS dies.\n# Keep this in sync with the same block in release.yml.\nresolve_soname() {\n  local soname=\"$1\" path\n\
+        \  path=$(ldconfig -p | awk -v s=\"${soname}\" '$1 == s && /x86-64/ { print $NF; exit }')\n  if [ -z \"${path}\" ] || [ \"$(basename\
+        \ \"${path}\")\" != \"${soname}\" ]; then\n    path=\"/usr/lib/x86_64-linux-gnu/${soname}\"\n  fi\n  if [ ! -e \"${path}\" ];\
+        \ then\n    echo \"::error::${soname} not found on the runner \u2014 cannot bundle a consistent OpenSSL pair (#352)\" >&2\n\
+        \    exit 1\n  fi\n  printf '%s' \"${path}\"\n}\nOPENSSL_ARGS=()\nfor _so in libssl.so.3 libcrypto.so.3; do\n  _path=$(resolve_soname\
+        \ \"${_so}\")\n  echo \"Bundling OpenSSL library: ${_path}\"\n  OPENSSL_ARGS+=(--library \"${_path}\")\ndone\n\n# \u2500\u2500\
+        \ Headless QPA platform plugin: needed by packaged offline automation \u2500\u2500\nQT_OFFSCREEN_SRC=\"${QT_ROOT_DIR}/plugins/platforms/libqoffscreen.so\"\
+        \nif [ ! -s \"${QT_OFFSCREEN_SRC}\" ]; then\n  echo \"::error::Qt offscreen platform plugin missing from matching Qt installation\"\
+        \ >&2\n  exit 1\nfi\ninstall -D -m 0755 \"${QT_OFFSCREEN_SRC}\" AppDir/usr/plugins/platforms/libqoffscreen.so\n\n./linuxdeploy-x86_64.AppImage\
+        \ \\\n  --appdir AppDir \\\n  --plugin qt \\\n  --output appimage \\\n  \"${OPENSSL_ARGS[@]}\" \\\n  2>&1 || true\n\n# \u2500\
+        \u2500 Guard: never ship a half-bundled OpenSSL again (#352) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\
+        SSL_BUNDLED=$(find AppDir -name 'libssl.so.3' -print -quit)\nCRYPTO_BUNDLED=$(find AppDir -name 'libcrypto.so.3' -print -quit)\n\
+        if [ -z \"${SSL_BUNDLED}\" ] || [ -z \"${CRYPTO_BUNDLED}\" ]; then\n  echo \"::error::AppImage must bundle libssl.so.3 AND libcrypto.so.3\
+        \ (ssl='${SSL_BUNDLED}' crypto='${CRYPTO_BUNDLED}') \u2014 a bundled libcrypto next to the host libssl breaks all TLS (#352)\"\
+        \n  exit 1\nfi\nif LD_LIBRARY_PATH=\"$(dirname \"${SSL_BUNDLED}\")\" ldd \"${SSL_BUNDLED}\" \\\n     | grep -q 'libcrypto\\\
+        .so\\.3 => not found'; then\n  echo \"::error::Bundled libssl.so.3 cannot resolve the bundled libcrypto.so.3\"\n  LD_LIBRARY_PATH=\"\
+        $(dirname \"${SSL_BUNDLED}\")\" ldd \"${SSL_BUNDLED}\" || true\n  exit 1\nfi\necho \"OpenSSL pair OK: ${SSL_BUNDLED} + ${CRYPTO_BUNDLED}\"\
+        \n\nTLS_PLUGIN=$(find AppDir -name 'libqopensslbackend.so' -print -quit)\nif [ -z \"${TLS_PLUGIN}\" ]; then\n  echo \"::error::Qt\
+        \ TLS backend plugin (libqopensslbackend.so) missing from AppDir \u2014 HTTPS would fail at runtime\"\n  exit 1\nfi\necho \"\
+        Qt TLS plugin OK: ${TLS_PLUGIN}\"\n\n# Verify AppImage was created\nif [ ! -f \"$OUTPUT\" ]; then\n  # Fallback: find any AppImage\
+        \ produced\n  OUTPUT=$(find . -maxdepth 1 -name \"*.AppImage\" | head -1)\nfi\n\nif [ -z \"$OUTPUT\" ] || [ ! -f \"$OUTPUT\"\
+        \ ]; then\n  echo \"::error::AppImage build failed \u2014 no .AppImage produced\"\n  exit 1\nfi\n\necho \"AppImage produced:\
+        \ $OUTPUT ($(du -sh \"$OUTPUT\" | cut -f1))\"\n\n# Rename to canonical name and move to dist/\nmkdir -p dist\nmv \"$OUTPUT\"\
+        \ dist/FinceptTerminal-Linux-x86_64.AppImage\nchmod +x dist/FinceptTerminal-Linux-x86_64.AppImage\n\n# Generate zsync file for\
+        \ delta updates\nif command -v zsyncmake &>/dev/null; then\n  zsyncmake dist/FinceptTerminal-Linux-x86_64.AppImage -o dist/FinceptTerminal-Linux-x86_64.AppImage.zsync\n\
+        \  echo \"zsync file generated\"\nelse\n  sudo apt-get install -y zsync -qq 2>/dev/null || true\n  if command -v zsyncmake &>/dev/null;\
+        \ then\n    zsyncmake dist/FinceptTerminal-Linux-x86_64.AppImage -o dist/FinceptTerminal-Linux-x86_64.AppImage.zsync\n    echo\
+        \ \"zsync file generated\"\n  else\n    echo \"::warning::zsyncmake not available \u2014 delta updates disabled\"\n  fi\nfi\n"
+    - name: Verify packaged Linux AppImage in headless mode
+      if: runner.os == 'Linux'
+      working-directory: fincept-qt
+      timeout-minutes: 5
+      env:
+        APPIMAGE_EXTRACT_AND_RUN: '1'
+        QT_QPA_PLATFORM: offscreen
+        QT_OPENGL: software
+        QTWEBENGINE_DISABLE_SANDBOX: '1'
+        QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu --no-sandbox --disable-gpu-compositing
+      run: 'set -euo pipefail
+
+        APPIMAGE=dist/FinceptTerminal-Linux-x86_64.AppImage
+
+        [ -s "$APPIMAGE" ] || { echo "::error::Built Linux AppImage missing"; exit 1; }
+
+        chmod +x "$APPIMAGE"
+
+        # This executes the real packaged file, not the CMake build-tree binary.
+
+        timeout 180 "$APPIMAGE" --profile ci-packaged --selftest-tools
+
+        '
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: ${{ matrix.artifact }}
+        path: ${{ runner.os == 'macOS' && 'fincept-qt/dist.tar.gz' || 'fincept-qt/dist/' }}
+        retention-days: 30

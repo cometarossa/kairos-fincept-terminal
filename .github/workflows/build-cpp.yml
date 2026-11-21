@@ -711,13 +711,28 @@ jobs:
             mkdir -p "${BUNDLE_FRAMEWORKS}"
             if [ -n "${PY_FRAMEWORK}" ]; then
               echo "Embedding Python.framework from: ${PY_FRAMEWORK}"
-              rsync -a --copy-unsafe-links "${PY_FRAMEWORK}/" "${BUNDLE_FRAMEWORKS}/Python.framework/" 2>/dev/null || \
-                cp -R "${PY_FRAMEWORK}" "${BUNDLE_FRAMEWORKS}/" 2>/dev/null || true
-              find "${BUNDLE_FRAMEWORKS}/Python.framework" -name "PrivateHeaders" -type l \
-                ! -exec test -e {} \; -delete 2>/dev/null || true
+              # Preserve the macOS versioned framework layout and symlinks.
+              # Flattening them with rsync --copy-unsafe-links invalidates
+              # strict bundle signatures on the hosted ARM64 runner.
+              PY_BUNDLE_FRAMEWORK="${BUNDLE_FRAMEWORKS}/Python.framework"
+              ditto "${PY_FRAMEWORK}" "${PY_BUNDLE_FRAMEWORK}"
               PY_VER="$(python3 -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-              ln -sf "../Frameworks/Python.framework/Versions/${PY_VER}/bin/python${PY_VER}" \
-                     "${APP_BUNDLE}/Contents/MacOS/python3" 2>/dev/null || true
+              [ -d "${PY_BUNDLE_FRAMEWORK}/Versions/${PY_VER}" ] || {
+                echo "::error::Embedded Python framework lacks active version ${PY_VER}"
+                exit 1
+              }
+              # Remove obsolete Python versions, retaining Current as a link.
+              for v in "${PY_BUNDLE_FRAMEWORK}"/Versions/*; do
+                [ -e "${v}" ] || continue
+                name="$(basename "${v}")"
+                case "${name}" in "${PY_VER}"|Current) ;; *) rm -rf "${v}" ;; esac
+              done
+              ln -sfn "${PY_VER}" "${PY_BUNDLE_FRAMEWORK}/Versions/Current"
+              find "${PY_BUNDLE_FRAMEWORK}" -name "PrivateHeaders" -type l \
+                ! -exec test -e {} \; -delete 2>/dev/null || true
+              ln -sfn "../Frameworks/Python.framework/Versions/${PY_VER}/bin/python${PY_VER}" \
+                     "${APP_BUNDLE}/Contents/MacOS/python3"
+
             else
               echo "::warning::Python.framework not found — bundle will rely on system python"
             fi
@@ -745,6 +760,12 @@ jobs:
               done
             codesign --remove-signature "${APP_BUNDLE}" 2>/dev/null || true
 
+            # Verify the nested Python framework independently before the app.
+            # A passing outer --deep signing command does not certify it.
+            if [ -d "${APP_BUNDLE}/Contents/Frameworks/Python.framework" ]; then
+              codesign --force --deep --sign - --timestamp=none "${APP_BUNDLE}/Contents/Frameworks/Python.framework"
+              codesign --verify --deep --strict --verbose=2 "${APP_BUNDLE}/Contents/Frameworks/Python.framework"
+            fi
             echo "Re-signing bundle ad-hoc (deep)..."
             codesign --force --deep --sign - --timestamp=none "${APP_BUNDLE}"
 
@@ -796,17 +817,15 @@ jobs:
           EOF
 
           # App icon — use real icon if present, otherwise generate a valid
-          # 256×256 PNG via Python/Pillow (always present on ubuntu-latest runners).
-          # We avoid ImageMagick because its default security policy and
-          # missing-font fallbacks produced zero-byte PNGs that failed libpng's
-          # CRC check in linuxdeploy. `python3 -c` sidesteps the YAML-indented
-          # heredoc trap (Python rejects the leading spaces as IndentationError).
+          # 256x256 RGBA PNG, generated with Python standard library only.
+          # Runners may lack Pillow (Linux job #136625941157 failed on PIL).
           ICON_DEST="AppDir/usr/share/icons/hicolor/256x256/apps/fincept-terminal.png"
           if [ -f "resources/icons/app_icon_256.png" ]; then
             cp resources/icons/app_icon_256.png "${ICON_DEST}"
           else
-            python3 -c 'import sys; from PIL import Image, ImageDraw, ImageFont; img=Image.new("RGBA",(256,256),(26,26,46,255)); d=ImageDraw.Draw(img); f=ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",96) if __import__("os").path.exists("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf") else ImageFont.load_default(); d.text((128,128),"FT",fill=(255,255,255,255),font=f,anchor="mm"); img.save(sys.argv[1],"PNG")' "${ICON_DEST}"
+            python3 "${GITHUB_WORKSPACE}/.github/scripts/create_fallback_icon.py" "${ICON_DEST}"
           fi
+
           # Verify the file is a valid PNG before handing it to linuxdeploy.
           file "${ICON_DEST}"
           [ -s "${ICON_DEST}" ] || { echo "::error::Icon is empty or missing"; exit 1; }
@@ -935,6 +954,12 @@ jobs:
     if: "!cancelled() && needs.build.result == 'success'"
 
     steps:
+      # Universal assembly uses its own runner and must checkout scripts.
+      - name: Checkout packaging scripts
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
       - name: Download macOS arm64
         uses: actions/download-artifact@v4
         with:

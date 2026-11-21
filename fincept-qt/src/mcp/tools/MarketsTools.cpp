@@ -79,6 +79,23 @@ std::vector<ToolDef> get_markets_tools() {
                 return ToolResult::fail("No quote data available for " + symbol);
             }
 
+            // Delivery origin + local receipt clock are diagnostic only.
+            // The provider's actual exchange as-of remains unverified.
+            const QJsonObject provenance{
+                {"delivery_origin", QString::fromLatin1(services::quote_delivery_origin_name(q.delivery_origin))},
+                {"local_received_at_utc", q.local_received_at_utc.isEmpty()
+                                              ? QJsonValue(QJsonValue::Null)
+                                              : QJsonValue(q.local_received_at_utc)},
+                {"market_as_of_utc", QJsonValue(QJsonValue::Null)},
+                {"market_as_of_verified", services::quote_market_asof_verified(q.delivery_origin)},
+                // Without an authenticated exchange as-of and a trusted clock,
+                // a 30s SQLite TTL cannot certify price age or market freshness.
+                {"market_age_seconds", QJsonValue(QJsonValue::Null)},
+                {"freshness_verified", false},
+                {"receipt_clock_verified", false},
+                {"execution_eligible", services::quote_execution_eligible(q.delivery_origin)},
+                {"scientific_claim", false},
+            };
             return ToolResult::ok_data(QJsonObject{{"symbol", q.symbol},
                                                    {"name", q.name},
                                                    {"price", q.price},
@@ -86,7 +103,8 @@ std::vector<ToolDef> get_markets_tools() {
                                                    {"change_pct", q.change_pct},
                                                    {"high", q.high},
                                                    {"low", q.low},
-                                                   {"volume", q.volume}});
+                                                   {"volume", q.volume},
+                                                   {"quote_provenance", provenance}});
         };
         tools.push_back(std::move(t));
     }

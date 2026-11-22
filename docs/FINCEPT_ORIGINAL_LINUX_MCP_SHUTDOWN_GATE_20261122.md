@@ -15,3 +15,11 @@ The Linux x64 package CI must execute the **real packaged** AppImage with --self
 **Status:** candidate PR only; unverified until native Linux package CI and Debian independent test pass. If it fails, diagnose the underlying Qt/static worker lifetime instead of weakening or bypassing the test.
 
 **No IG session, orders, live market feeds, credential access or paid API calls.**
+
+## Independent Debian 13 verification and headless timer isolation
+
+The exact #71 Ubuntu-green artifact `3bb71b622387eb1107362541d42485242a6c274edb7ccde08e5049f2f1446751` was independently copied to Debian 13 and retested with an isolated HOME/XDG/TMPDIR. Original MCP assertions **60 passed, 0 failed** but the process still returned **timeout exit 124** after 35 seconds. `fincept.log` confirmed the shared shutdown lambda executed; the original terminal GUI and IG broker were not touched.
+
+**Confirmed startup defect:** the disposable headless MCP profile logged `Pre-warmed 55 dashboard topics during login screen`. The original `main.cpp` queued zero-delay GUI market pre-warm and a three-stage deferred service chain *before* dispatching headless selftests. `McpServerSelfTest.cpp` pumps nested Qt event loops, which therefore execute those queued tasks. The deferred chain includes cloud refresh and broker session monitoring; this behavior is unnecessary and unsafe for no-provider/no-broker headless QA. Whether it fully explains the shutdown hang is **not yet proven**.
+
+This candidate update computes the already-existing `headless_run` rule earlier and gates **dashboard market pre-warm, deferred cloud/broker/producer chain, news pruning and retention sweeper** without altering normal GUI scheduling or test assertions. Independent checks: six source-level regression tests PASS (including repair of a syntax error in the preceding CI source test); native macOS Qt `main.cpp` compiles with pinned original Qt compilation flags (syntax-only). **Exact-head Linux CI and independent Debian AppImage exit 0 remain mandatory before merge**. No paid APIs, broker logins, orders or credentials were used.

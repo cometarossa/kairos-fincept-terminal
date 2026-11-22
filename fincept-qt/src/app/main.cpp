@@ -337,6 +337,20 @@ int main(int argc, char* argv[]) {
 
     // ── Primary instance from here on ────────────────────────────────────────
 
+    // Headless tests pump nested Qt event loops. A zero-delay GUI startup timer
+    // would therefore run inside the test and accidentally start live market
+    // pre-warm and broker session monitors. Keep GUI-only deferred services
+    // disabled for every selftest and smoke run (also for tool dumps).
+    const bool headless_run = [argc, argv]() {
+        for (int i = 1; i < argc; ++i) {
+            if (qstrcmp(argv[i], "--smoke-test") == 0 ||
+                qstrncmp(argv[i], "--selftest", 10) == 0 ||
+                qstrcmp(argv[i], "--dump-tools") == 0)
+                return true;
+        }
+        return false;
+    }();
+
     // Bring up the TerminalShell. This is the multi-window refactor's
     // process-level coordinator. Phase 1 ships a skeleton: it bootstraps
     // ProfilePaths, resolves the active ProfileId, and warms the registries
@@ -436,7 +450,8 @@ int main(int argc, char* argv[]) {
     // batch below) warm themselves on their own next scheduler pass once
     // subscribers exist; pre-warming them here would orphan-log because
     // ensure_registered_with_hub() hasn't run for them yet.
-    QTimer::singleShot(0, qApp, []() {
+    if (!headless_run)
+        QTimer::singleShot(0, qApp, []() {
         auto& hub = fincept::datahub::DataHub::instance();
         QStringList topics;
 
@@ -677,7 +692,8 @@ int main(int argc, char* argv[]) {
         LOG_INFO("App", "Deferred service init complete");
     };
 
-    post_chain({init_hub_producers, init_cloud_sync, init_wallet_treasury_and_monitors});
+    if (!headless_run)
+        post_chain({init_hub_producers, init_cloud_sync, init_wallet_treasury_and_monitors});
 
     // Create all application directories under %LOCALAPPDATA%/com.fincept.terminal
     fincept::AppPaths::ensure_all();
@@ -893,7 +909,8 @@ int main(int argc, char* argv[]) {
         // to the main thread's event queue instead.
         {
             int64_t news_cutoff = QDateTime::currentSecsSinceEpoch() - (30LL * 86400);
-            QTimer::singleShot(0, [news_cutoff]() {
+            if (!headless_run)
+                QTimer::singleShot(0, [news_cutoff]() {
                 fincept::NewsArticleRepository::instance().prune_older_than(news_cutoff);
                 LOG_INFO("App", "News articles pruned (keeping 30 days)");
             });
@@ -915,13 +932,6 @@ int main(int argc, char* argv[]) {
         // databases down is a shutdown crash with no dump (the crash handler is
         // already gone by static-destruction time). Detected by scanning argv
         // because smoke_mode is not computed until much later in main().
-        const bool headless_run = [argc, argv]() {
-            for (int i = 1; i < argc; ++i) {
-                if (qstrcmp(argv[i], "--smoke-test") == 0 || qstrncmp(argv[i], "--selftest", 10) == 0)
-                    return true;
-            }
-            return false;
-        }();
         if (!headless_run)
             fincept::StorageManager::instance().start_retention_sweeper();
 

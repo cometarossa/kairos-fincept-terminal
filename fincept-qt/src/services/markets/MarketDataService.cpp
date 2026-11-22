@@ -1,5 +1,6 @@
 #include "services/markets/MarketDataService.h"
 #include "services/markets/HistoryIntegrity.h"
+#include <cstdio>
 
 #include "core/logging/Logger.h"
 #include "datahub/DataHub.h"
@@ -270,21 +271,19 @@ void MarketDataService::refresh(const QStringList& topics) {
                     hub.publish_error(topic, errstr.left(200));
                     continue;
                 }
+                // The DataHub batch path must apply the same ALL-BARS integrity
+                // boundary as fetch_history()/MCP: QJsonValue::toDouble() used
+                // to turn a missing/null OHLCV field into a fabricated zero and
+                // a missing provider series into a successful empty history.
+                // Neither is research-quality data. Reject the complete series
+                // and publish an error, never substitute or skip individual bars.
                 const QJsonArray pts = h.value("points").toArray();
-                QVector<HistoryPoint> points;
-                points.reserve(pts.size());
-                for (const auto& pv : pts) {
-                    const QJsonObject p = pv.toObject();
-                    HistoryPoint pt;
-                    pt.timestamp = static_cast<qint64>(p["timestamp"].toDouble());
-                    pt.open = p["open"].toDouble();
-                    pt.high = p["high"].toDouble();
-                    pt.low = p["low"].toDouble();
-                    pt.close = p["close"].toDouble();
-                    pt.volume = static_cast<qint64>(p["volume"].toDouble());
-                    points.append(pt);
+                const auto decoded = history_integrity::decode(QJsonDocument(pts));
+                if (!decoded.has_value()) {
+                    hub.publish_error(topic, QStringLiteral("invalid or unavailable batch history"));
+                    continue;
                 }
-                self->publish_history_to_hub(sym, per, ivl, points);
+                self->publish_history_to_hub(sym, per, ivl, *decoded);
                 ++hists_ok;
             }
             for (const auto& h : hist_reqs) {
@@ -639,9 +638,23 @@ void MarketDataService::fetch_history(const QString& symbol, const QString& peri
     QStringList args;
     args << "historical_period" << symbol << period << interval;
 
-    python::PythonRunner::instance().run("yfinance_data.py", args, [cb, symbol](python::PythonResult result) {
+    python::PythonRunner::instance().run("yfinance_data.py", args, [cb, symbol, period, interval](python::PythonResult result) {
+        // Printed diagnostics are strictly opt-in and consist only of fixed
+        // class names: never print raw provider text, HTTP headers, URLs,
+        // crumb, cookie, prices or credentials in the public-source QA.
+        const bool public_history_qa =
+            QCoreApplication::arguments().contains(QStringLiteral("--selftest-mcp-server")) &&
+            qEnvironmentVariable("FINCEPT_PUBLIC_MCP_HISTORY_QA") == QLatin1String("SPY_5D_PUBLIC_READ") &&
+            symbol == QLatin1String("SPY") && period == QLatin1String("5d") &&
+            interval == QLatin1String("1d");
         if (!result.success) {
-            LOG_WARN("MarketData", "History fetch failed for " + symbol + ": " + result.error);
+            if (public_history_qa) {
+                std::fprintf(stdout, "QA_YAHOO_HISTORY_CLASS=RUNNER_FAILURE\n");
+                std::fflush(stdout);
+                LOG_WARN("MarketData", "Public Yahoo QA runner unavailable (details withheld)");
+            } else {
+                LOG_WARN("MarketData", "History fetch failed for " + symbol + ": " + result.error);
+            }
             cb(false, {});
             return;
         }
@@ -649,6 +662,17 @@ void MarketDataService::fetch_history(const QString& symbol, const QString& peri
         const QJsonDocument doc = QJsonDocument::fromJson(result.output.toUtf8());
         const auto history = history_integrity::decode(doc);
         if (!history.has_value()) {
+            if (public_history_qa) {
+                static const QSet<QString> kAllowed{
+                    "POSSIBLE_RATE_LIMIT", "POSSIBLE_TIMEOUT", "POSSIBLE_PROXY_FAILURE",
+                    "POSSIBLE_TLS_FAILURE", "POSSIBLE_CRUMB_OR_COOKIE", "POSSIBLE_AUTH_DENIAL",
+                    "YFINANCE_GENERIC_NO_PRICE", "EMPTY_UNATTRIBUTED", "EXCEPTION_UNCLASSIFIED"};
+                const QString category = doc.isObject()
+                    ? doc.object().value(QStringLiteral("qa_failure_class")).toString() : QString();
+                const QString safe = kAllowed.contains(category) ? category : QStringLiteral("MISSING_OR_UNRECOGNIZED");
+                std::fprintf(stdout, "QA_YAHOO_HISTORY_CLASS=%s\n", safe.toLatin1().constData());
+                std::fflush(stdout);
+            }
             // A successful provider request does not make missing, future,
             // misordered, NaN or impossible prices trustworthy.
             LOG_WARN("MarketData", "History integrity validation failed for " + symbol);

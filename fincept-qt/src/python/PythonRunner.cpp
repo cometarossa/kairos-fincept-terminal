@@ -424,8 +424,20 @@ QProcessEnvironment PythonRunner::build_python_env() const {
     // shell happened to have. Without this, Python scripts like fred_data.py that
     // read os.environ.get("FRED_API_KEY") only worked when the user happened to
     // export the variable in their shell before launching the app.
+    // One disposable *public-market QA* is permitted by the native MCP selftest.
+    // Do NOT read ANY managed secrets from macOS Keychain in that mode; even if
+    // a user's real profile accidentally leaks into HOME the one-off public
+    // provider subprocess must never receive IG/LLM/account credentials.
+    // Normal app behavior remains unchanged outside this exact selftest mode.
+    const bool public_history_qa =
+        QCoreApplication::arguments().contains(QStringLiteral("--selftest-mcp-server")) &&
+        qEnvironmentVariable("FINCEPT_PUBLIC_MCP_HISTORY_QA") == QLatin1String("SPY_5D_PUBLIC_READ");
     int injected = 0;
     for (const QString& key : kManagedCredentialKeys) {
+        if (public_history_qa) {
+            env.remove(key);
+            continue;
+        }
         auto r = SecureStorage::instance().retrieve(key);
         if (r.is_ok() && !r.value().isEmpty()) {
             env.insert(key, r.value());

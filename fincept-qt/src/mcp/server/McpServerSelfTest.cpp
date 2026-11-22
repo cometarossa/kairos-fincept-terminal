@@ -7,6 +7,7 @@
 #include "mcp/server/EssentialTools.h"
 #include "mcp/server/McpHttpServer.h"
 #include "services/markets/MarketDataService.h"
+#include "python/PythonRunner.h"
 #include "services/markets/HistoryIntegrity.h"
 #include "storage/cache/CacheManager.h"
 #include "storage/sqlite/CacheDatabase.h"
@@ -546,6 +547,79 @@ int run_mcp_server_selftest() {
     markets.history_selftest_fixture_.reset();
     rep.check(!markets.history_selftest_fixture_.has_value(),
               QStringLiteral("synthetic history fixture cleared before end of selftest"));
+
+    // PUBLIC PROVIDER QA — disabled unless every explicit gate is supplied.
+    // Deliberately AFTER the synthetic fixture is cleared, so the independently
+    // maintained KAIROS client must call the ORIGINAL provider-backed Qt path.
+    // This function only runs for --selftest-mcp-server, never in the GUI.
+    // The outer harness must first prove Seatbelt blocks direct non-loopback
+    // egress and provide a 127.0.0.1-only, exact-host Yahoo CONNECT proxy.
+    // No proxy/bearer/account secret is persisted in Fincept configuration.
+    const QString public_qa = qEnvironmentVariable("FINCEPT_PUBLIC_MCP_HISTORY_QA");
+    const QString public_script = qEnvironmentVariable("FINCEPT_PUBLIC_MCP_HISTORY_CLIENT_SCRIPT");
+    const QString public_python = qEnvironmentVariable("FINCEPT_PUBLIC_MCP_HISTORY_PYTHON");
+    if (!public_qa.isEmpty() || !public_script.isEmpty() || !public_python.isEmpty()) {
+        const QFileInfo qa_file(public_script);
+        const QFileInfo python_file(public_python);
+        const QString proxy = qEnvironmentVariable("HTTPS_PROXY");
+        const QRegularExpression proxy_rx(QStringLiteral("^http://127\\.0\\.0\\.1:[1-9][0-9]{0,4}$"));
+        const bool approved =
+            public_qa == QLatin1String("SPY_5D_PUBLIC_READ") &&
+            QCoreApplication::arguments().contains(QStringLiteral("--selftest-mcp-server")) &&
+            proxy_rx.match(proxy).hasMatch() &&
+            qa_file.isAbsolute() && qa_file.isFile() &&
+            python_file.isAbsolute() && python_file.isExecutable() &&
+            !public_python.isEmpty() &&
+            // Explicit, independent outer sandbox cannot be invented here.
+            qEnvironmentVariable("FINCEPT_PUBLIC_QA_SANDBOX_VERIFIED") == QLatin1String("EPERM_EXTERNAL");
+        if (!approved) {
+            rep.check(false, QStringLiteral("public Yahoo history test refused: invalid opt-in or network boundary"));
+        } else {
+            // On a headless selftest the normal async Python executable probe
+            // may not have completed when the MCP server starts. Wait for the
+            // ORIGINAL PythonRunner instead of forcing a fake provider reply.
+            auto& original_runner = fincept::python::PythonRunner::instance();
+            const bool python_ready = pump_until([&original_runner]() {
+                return original_runner.is_available();
+            }, 6000);
+            rep.check(python_ready, QStringLiteral("public Yahoo original PythonRunner became ready"));
+            if (python_ready) {
+            QProcess client;
+            QProcessEnvironment safe;
+            safe.insert(QStringLiteral("HOME"), qEnvironmentVariable("HOME"));
+            safe.insert(QStringLiteral("TMPDIR"), qEnvironmentVariable("TMPDIR"));
+            safe.insert(QStringLiteral("PATH"), QStringLiteral("/usr/bin:/bin:/usr/local/bin"));
+            safe.insert(QStringLiteral("PYTHONDONTWRITEBYTECODE"), QStringLiteral("1"));
+            safe.insert(QStringLiteral("KAIROS_QA_MCP_PORT"), QString::number(port));
+            safe.insert(QStringLiteral("KAIROS_QA_MCP_TEST_TOKEN"), token);
+            client.setProcessEnvironment(safe);
+            client.setProgram(public_python);
+            client.setArguments({public_script, QStringLiteral("--client-probe")});
+            client.start();
+            const bool completed = pump_until(
+                [&client]() { return client.state() == QProcess::NotRunning; }, 22000);
+            if (!completed) {
+                client.kill();
+                client.waitForFinished(2000);
+            }
+            const QByteArray evidence = client.readAllStandardOutput();
+            QString failure_stage = QStringLiteral("UNKNOWN");
+            for (const char* name : {"SETUP", "RESEARCH_TRANSPORT", "RESPONSE_POLICY",
+                                     "BAR_STRUCTURE", "RECENCY"}) {
+                if (evidence.contains(QByteArray("KAIROS_ORIGINAL_FINCEPT_PUBLIC_HISTORY_READ_FAIL_") + name)) {
+                    failure_stage = QString::fromLatin1(name);
+                    break;
+                }
+            }
+            rep.check(completed && client.exitStatus() == QProcess::NormalExit &&
+                          client.exitCode() == 0 &&
+                          evidence.contains("KAIROS_ORIGINAL_FINCEPT_PUBLIC_HISTORY_READ_PASS"),
+                      QStringLiteral("real public Yahoo history passed original Qt MCP to external KAIROS"),
+                      QStringLiteral("child status=%1; stage=%2")
+                          .arg(client.exitCode()).arg(failure_stage));
+            }
+        }
+    }
 
     if (!destructive_tool.isEmpty()) {
         const QString advertised = McpHttpServer::advertised_name(destructive_tool);

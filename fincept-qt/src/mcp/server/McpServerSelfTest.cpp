@@ -6,6 +6,7 @@
 #include "mcp/McpProvider.h"
 #include "mcp/server/EssentialTools.h"
 #include "mcp/server/McpHttpServer.h"
+#include "services/markets/MarketDataService.h"
 #include "storage/cache/CacheManager.h"
 #include "storage/sqlite/CacheDatabase.h"
 
@@ -345,6 +346,23 @@ int run_mcp_server_selftest() {
                       res.value(QStringLiteral("structuredContent")).toObject().contains(QStringLiteral("tools")),
                   QStringLiteral("tools/call tool_list returns content + structuredContent"), clip(first_text(res)));
     }
+    // F1.2: test-only in-memory historical bars. The friend-scope fixture is
+    // armed BEFORE the external KAIROS child so both C++ and Python can use the
+    // genuine get_history handler without reaching PythonRunner or yfinance.
+    // Even an unmatched period/symbol fails closed while this fixture is armed.
+    auto& markets = services::MarketDataService::instance();
+    const QString history_symbol = QStringLiteral("KAIROSHISTORYQA");
+    markets.history_selftest_fixture_ = services::MarketDataService::HistorySelftestFixture{
+        history_symbol, QStringLiteral("1mo"), QStringLiteral("1d"),
+        QVector<services::HistoryPoint>{
+            {1704067200, 100.0, 105.0, 99.0, 103.0, 1000},
+            {1704153600, 103.0, 108.0, 102.0, 107.0, 1250},
+            {1704240000, 107.0, 109.0, 104.0, 105.0, 950},
+        }};
+    rep.check(markets.history_selftest_fixture_.has_value() &&
+                  markets.history_selftest_fixture_->bars.size() == 3,
+              QStringLiteral("synthetic history fixture armed without Python/provider access"));
+
     // ── F1: real get_quote handler, synthetic ONLY in the isolated SQLite cache ──
     // The original MarketDataService reads a valid cache hit synchronously,
     // before reaching yfinance_data.py. NEVER call get_quote if seeding failed:
@@ -442,6 +460,42 @@ int run_mcp_server_selftest() {
             cache.remove(key);
         }
     }
+    // F1.2: exercise the ORIGINAL get_history MCP handler and its latest-bar
+    // truncation, then reject a mismatched window without provider fallback.
+    {
+        const QJsonObject r = call_tool(port, token, QStringLiteral("get_history"),
+                                        {{"symbol", history_symbol}, {"period", "1mo"},
+                                         {"interval", "1d"}, {"limit", 2}}, 52)
+                                  .value(QStringLiteral("result")).toObject();
+        const QJsonObject data = r.value(QStringLiteral("structuredContent")).toObject();
+        const QJsonArray bars = data.value(QStringLiteral("bars")).toArray();
+        const QJsonObject last = bars.size() == 2 ? bars.at(1).toObject() : QJsonObject{};
+        rep.check(!r.value(QStringLiteral("isError")).toBool(true) &&
+                      data.value(QStringLiteral("symbol")).toString() == history_symbol &&
+                      data.value(QStringLiteral("period")).toString() == QLatin1String("1mo") &&
+                      data.value(QStringLiteral("interval")).toString() == QLatin1String("1d") &&
+                      data.value(QStringLiteral("count")).toInt() == 2 &&
+                      data.value(QStringLiteral("total_bars")).toInt() == 3 &&
+                      data.value(QStringLiteral("truncated")).toBool(false) &&
+                      last.value(QStringLiteral("timestamp")).toVariant().toLongLong() == 1704240000 &&
+                      last.value(QStringLiteral("open")).toDouble() == 107.0 &&
+                      last.value(QStringLiteral("high")).toDouble() == 109.0 &&
+                      last.value(QStringLiteral("low")).toDouble() == 104.0 &&
+                      last.value(QStringLiteral("close")).toDouble() == 105.0 &&
+                      last.value(QStringLiteral("volume")).toDouble() == 950.0,
+                  QStringLiteral("original get_history MCP returns latest synthetic OHLCV bars only"));
+        const QJsonObject mismatch = call_tool(port, token, QStringLiteral("get_history"),
+                                               {{"symbol", history_symbol}, {"period", "3mo"},
+                                                {"interval", "1d"}, {"limit", 2}}, 53)
+                                         .value(QStringLiteral("result")).toObject();
+        rep.check(mismatch.value(QStringLiteral("isError")).toBool(false) &&
+                      mismatch.value(QStringLiteral("structuredContent")).toObject().isEmpty(),
+                  QStringLiteral("synthetic history mismatched window fails closed without provider"));
+    }
+    markets.history_selftest_fixture_.reset();
+    rep.check(!markets.history_selftest_fixture_.has_value(),
+              QStringLiteral("synthetic history fixture cleared before end of selftest"));
+
     if (!destructive_tool.isEmpty()) {
         const QString advertised = McpHttpServer::advertised_name(destructive_tool);
         const QJsonObject res = call_tool(port, token, advertised,

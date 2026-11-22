@@ -155,7 +155,9 @@ def get_historical(symbol, start_date, end_date, interval='1d'):
         ticker = yf.Ticker(symbol)
         _buf = io.StringIO()
         with contextlib.redirect_stdout(_buf):
+            # Match the period-history adjustment semantics explicitly.
             hist = ticker.history(start=start_date, end=end_date, interval=interval,
+                                  auto_adjust=True, back_adjust=False,
                                   timeout=_NET_TIMEOUT)
 
         if hist.empty:
@@ -1168,7 +1170,13 @@ def get_historical_period(symbol, period='6mo', interval='1d'):
         ticker = yf.Ticker(symbol)
         _buf = io.StringIO()
         with contextlib.redirect_stdout(_buf):
-            hist = ticker.history(period=period, interval=interval, timeout=_NET_TIMEOUT)
+            # Pin adjusted OHLC explicitly: the original installed yfinance
+            # 0.2.66 currently defaults auto_adjust=True/back_adjust=False.
+            # Do not rely on a future library-default change to silently
+            # reinterpret MCP research prices. This is NOT source attestation.
+            hist = ticker.history(period=period, interval=interval,
+                                  auto_adjust=True, back_adjust=False,
+                                  timeout=_NET_TIMEOUT)
 
         if hist.empty:
             if _public_yahoo_history_qa_enabled(symbol, period, interval):

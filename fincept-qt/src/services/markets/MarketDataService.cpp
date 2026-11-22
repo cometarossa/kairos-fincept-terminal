@@ -1,4 +1,5 @@
 #include "services/markets/MarketDataService.h"
+#include "services/markets/HistoryIntegrity.h"
 
 #include "core/logging/Logger.h"
 #include "datahub/DataHub.h"
@@ -645,28 +646,19 @@ void MarketDataService::fetch_history(const QString& symbol, const QString& peri
             return;
         }
 
-        auto doc = QJsonDocument::fromJson(result.output.toUtf8());
-        if (!doc.isArray()) {
-            LOG_WARN("MarketData", "History parse error for " + symbol);
+        const QJsonDocument doc = QJsonDocument::fromJson(result.output.toUtf8());
+        const auto history = history_integrity::decode(doc);
+        if (!history.has_value()) {
+            // A successful provider request does not make missing, future,
+            // misordered, NaN or impossible prices trustworthy.
+            LOG_WARN("MarketData", "History integrity validation failed for " + symbol);
             cb(false, {});
             return;
         }
 
-        QVector<HistoryPoint> history;
-        for (const auto& v : doc.array()) {
-            QJsonObject o = v.toObject();
-            HistoryPoint pt;
-            pt.timestamp = static_cast<qint64>(o["timestamp"].toDouble());
-            pt.open = o["open"].toDouble();
-            pt.high = o["high"].toDouble();
-            pt.low = o["low"].toDouble();
-            pt.close = o["close"].toDouble();
-            pt.volume = static_cast<qint64>(o["volume"].toDouble());
-            history.append(pt);
-        }
-
-        LOG_INFO("MarketData", QString("Fetched %1 history points for %2").arg(history.size()).arg(symbol));
-        cb(true, history);
+        LOG_INFO("MarketData", QString("Validated %1 history points for %2")
+                                   .arg(history->size()).arg(symbol));
+        cb(true, *history);
     });
 }
 

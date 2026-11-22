@@ -89,6 +89,33 @@ class OriginalProviderHistoryConversion(unittest.TestCase):
         with patch.object(self.module.yf, "Ticker", return_value=types.SimpleNamespace(history=lambda **_: frame.iloc[:0])):
             self.assertEqual(self.module.get_historical_period("SYNTH", "5d", "1d"), [])
 
+    def test_adjustment_is_explicit_for_both_original_history_paths(self):
+        # These are the ORIGINAL yfinance_data functions, not a replacement
+        # provider. Capture their actual kwargs with an in-memory fake Ticker.
+        # Never call Yahoo, a broker or a market API in this regression.
+        idx = pd.DatetimeIndex(["2024-01-02"], tz="America/New_York")
+        adjusted_ohlcv = pd.DataFrame({
+            "Open": [100.0], "High": [103.0], "Low": [99.0],
+            "Close": [102.0], "Volume": [5000]}, index=idx)
+        actual_kwargs = []
+
+        def history(**kwargs):
+            actual_kwargs.append(dict(kwargs))
+            return adjusted_ohlcv
+
+        with patch.object(self.module.yf, "Ticker",
+                          return_value=types.SimpleNamespace(history=history)) as ticker:
+            period_result = self.module.get_historical_period("SPY", "5d", "1d")
+            date_result = self.module.get_historical("SPY", "2024-01-01", "2024-01-04", "1d")
+        self.assertEqual(ticker.call_count, 2)
+        self.assertEqual(len(actual_kwargs), 2)
+        for kwargs in actual_kwargs:
+            with self.subTest(kwargs=kwargs):
+                self.assertIs(kwargs.get("auto_adjust"), True)
+                self.assertIs(kwargs.get("back_adjust"), False)
+        self.assertEqual(period_result[0]["close"], 102.0)
+        self.assertEqual(date_result[0]["close"], 102.0)
+
     def test_provider_error_is_not_price_data(self):
         def raises(**_):
             raise RuntimeError("Provider unavailable")

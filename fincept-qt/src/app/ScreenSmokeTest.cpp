@@ -3,6 +3,7 @@
 #include "app/DockScreenRouter.h"
 #include "auth/InactivityGuard.h"
 #include "core/logging/Logger.h"
+#include "screens/dashboard/canvas/DashboardCanvas.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
@@ -50,6 +51,8 @@ int wait_for_construction(DockScreenRouter* router, const QString& id) {
         QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     return static_cast<int>(t.elapsed());
 }
+
+const QString kDashboardId = QStringLiteral("dashboard");
 } // namespace
 
 int run_screen_smoke_test(DockScreenRouter* router) {
@@ -84,6 +87,18 @@ int run_screen_smoke_test(DockScreenRouter* router) {
     }
 
     const QStringList ids = router->all_screen_ids();
+    if (ids.isEmpty()) {
+        std::fprintf(stderr, "[Smoke] FAIL: all_screen_ids() is empty — no screens registered, nothing to test\n");
+        std::fflush(stderr);
+        LOG_ERROR("Smoke", "Aborted: no screens registered");
+        return 4;
+    }
+    if (!ids.contains(kDashboardId)) {
+        std::fprintf(stderr, "[Smoke] FAIL: '%s' is not registered with the router\n", qUtf8Printable(kDashboardId));
+        std::fflush(stderr);
+        LOG_ERROR("Smoke", "Aborted: dashboard screen is not registered");
+        return 5;
+    }
     std::fprintf(stderr, "[Smoke] walking %d screens\n", static_cast<int>(ids.size()));
     std::fflush(stderr);
     LOG_INFO("Smoke", QString("Screen smoke test: %1 screens").arg(ids.size()));
@@ -113,6 +128,17 @@ int run_screen_smoke_test(DockScreenRouter* router) {
 
         // Let showEvent-driven child construction run before moving on.
         spin(kSettleMs);
+
+        // F0 independent-terminal gate: navigating the REAL dashboard must
+        // construct its original canvas, not merely an empty QWidget shell.
+        // Check during the normal screen walk; do not navigate twice, which
+        // could trigger duplicate subscriptions or provider reads.
+        if (id == kDashboardId && !router->screen_widget(id)->findChild<screens::DashboardCanvas*>()) {
+            failures << id;
+            std::fprintf(stderr, "[Smoke] !!! dashboard constructed without DashboardCanvas\n");
+            std::fflush(stderr);
+            LOG_ERROR("Smoke", "dashboard constructed without its original DashboardCanvas");
+        }
 
         // Surface slow screens without failing them — a screen that needs seconds
         // to build is a real finding, just not this test's verdict to make.

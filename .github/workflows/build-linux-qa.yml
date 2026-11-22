@@ -366,6 +366,7 @@ jobs:
         QTWEBENGINE_DISABLE_SANDBOX: '1'
         QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu --no-sandbox --disable-gpu-compositing
       run: |
+        set -euo pipefail
 
         APPIMAGE=dist/FinceptTerminal-Linux-x86_64.AppImage
 

@@ -365,7 +365,8 @@ jobs:
         QT_OPENGL: software
         QTWEBENGINE_DISABLE_SANDBOX: '1'
         QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu --no-sandbox --disable-gpu-compositing
-      run: 'set -euo pipefail
+      run: |
+        set -euo pipefail
 
         APPIMAGE=dist/FinceptTerminal-Linux-x86_64.AppImage
 
@@ -376,8 +377,14 @@ jobs:
         # This executes the real packaged file, not the CMake build-tree binary.
 
         timeout 180 "$APPIMAGE" --profile ci-packaged --selftest-tools
+        # Unlike a PASS line, process exit 0 proves the packaged MCP teardown.
+        timeout 35 "$APPIMAGE" --profile ci-packaged-mcp-shutdown --selftest-mcp-server > /tmp/fincept-mcp-lifecycle-ci.log 2>&1 || { tail -n 60 /tmp/fincept-mcp-lifecycle-ci.log; exit 1; }
+        grep -q "60 passed, 0 failed" /tmp/fincept-mcp-lifecycle-ci.log
+        # Independently reproduced Debian Arena hang despite zero assertion failures.
+        # Verify the actual packaged process exits zero, not just a PASS marker.
+        timeout 35 "$APPIMAGE" --profile ci-packaged-arena-shutdown --selftest-arena > /tmp/fincept-arena-lifecycle-ci.log 2>&1 || { tail -n 60 /tmp/fincept-arena-lifecycle-ci.log; exit 1; }
+        grep -Fq "0 failure(s)" /tmp/fincept-arena-lifecycle-ci.log
 
-        '
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:

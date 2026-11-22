@@ -25,5 +25,11 @@ class NativeMcpHeadlessShutdown(unittest.TestCase):
         self.assertIn('grep -q "60 passed, 0 failed"',workflow)
         self.assertIn('|| { tail -n 60 /tmp/fincept-mcp-lifecycle-ci.log; exit 1; }',workflow)
 
+    def test_packaged_arena_exit_is_strict_gate_not_log_only(self):
+        workflow=(ROOT/'.github/workflows/build-linux-qa.yml').read_text()
+        self.assertIn('timeout 35 "$APPIMAGE" --profile ci-packaged-arena-shutdown --selftest-arena',workflow)
+        self.assertIn('grep -Fq "0 failure(s)" /tmp/fincept-arena-lifecycle-ci.log',workflow)
+        self.assertIn('|| { tail -n 60 /tmp/fincept-arena-lifecycle-ci.log; exit 1; }',workflow)
+
 if __name__ == '__main__':
     unittest.main()

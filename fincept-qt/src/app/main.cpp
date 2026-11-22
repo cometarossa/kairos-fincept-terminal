@@ -346,7 +346,8 @@ int main(int argc, char* argv[]) {
     // Must run BEFORE any service init so future phases that lift services
     // into the shell can rely on it being present.
     fincept::TerminalShell::instance().initialise();
-    QObject::connect(&app, &QCoreApplication::aboutToQuit, []() {
+    // Shared between GUI event-loop quit and MCP headless early return.
+    const auto shutdown_application_services = []() {
         // MCP first, shell second — deliberate ordering.
         //
         // shutdown_mcp() stops TerminalMcpBridge and then every external MCP
@@ -381,7 +382,8 @@ int main(int argc, char* argv[]) {
         fincept::python::PythonSetupManager::instance().cancel(/*wait_for_exit=*/true);
 
         fincept::TerminalShell::instance().shutdown();
-    });
+    };
+    QObject::connect(&app, &QCoreApplication::aboutToQuit, shutdown_application_services);
 
     // Register DataHub payload meta-types (QuoteData, HistoryPoint, InfoData,
     // NewsArticle, EconomicsResult) so they can flow through QVariant-keyed
@@ -1100,8 +1102,16 @@ int main(int argc, char* argv[]) {
         if (qstrcmp(argv[i], "--dump-tools") == 0)
             return fincept::mcp::dump_tools_json();
         for (const auto& suite : kSelftestSuites) {
-            if (qstrcmp(argv[i], suite.flag) == 0)
-                return suite.run();
+            if (qstrcmp(argv[i], suite.flag) == 0) {
+                const int result = suite.run();
+                // QApplication::aboutToQuit is never emitted when main()
+                // returns without app.exec(). The MCP selftest exercises
+                // asynchronous services: stop them before Qt's destructors
+                // and static singletons, just as the normal GUI exit does.
+                if (qstrcmp(argv[i], "--selftest-mcp-server") == 0)
+                    shutdown_application_services();
+                return result;
+            }
         }
     }
 

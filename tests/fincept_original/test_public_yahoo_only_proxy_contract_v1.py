@@ -1,6 +1,6 @@
 """Negative tests: test-only HTTP CONNECT proxy must NEVER reach a broker."""
 import unittest
-from tests.fincept_original.public_yahoo_only_connect_proxy_v1 import parse_connect, APPROVED
+from public_yahoo_only_connect_proxy_v1 import parse_connect, APPROVED
 
 
 class ProxyPolicyTest(unittest.TestCase):

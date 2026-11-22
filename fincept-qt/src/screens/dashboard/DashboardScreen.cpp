@@ -498,11 +498,10 @@ namespace {
 constexpr quint32 kDashLayoutMagic = 0xDA58A101u;
 constexpr quint32 kDashLayoutVersion = 1;
 
-/// Dynamic-property guard: set when restore_layout() could not *read* the
-/// stored blob (as opposed to reading a genuinely absent/corrupt one). While
-/// it is set, save_layout() refuses to write, because the layout on screen is
-/// the built-in default rather than anything the user arranged — persisting it
-/// would replace their real dashboard. Cleared by the next successful load.
+/// Dynamic-property guard: set when restore_layout() cannot safely recover
+/// the saved blob (settings read failure, unsupported format version, or
+/// truncated items). While set, save_layout() refuses to overwrite the saved
+/// dashboard with the on-screen default. Cleared by a supported complete read.
 constexpr const char* kDashLayoutLoadFailedProp = "fincept_dash_layout_load_failed";
 } // namespace
 
@@ -510,7 +509,7 @@ void DashboardScreen::save_layout() {
     save_timer_->stop();
 
     if (property(kDashLayoutLoadFailedProp).toBool()) {
-        LOG_WARN("Dashboard", "Skipping layout save — the stored layout could not be read this session, so the "
+        LOG_WARN("Dashboard", "Skipping layout save — the stored layout could not be safely restored, so the "
                               "on-screen default must not overwrite it");
         return;
     }
@@ -575,9 +574,9 @@ void DashboardScreen::restore_layout() {
                     return;
                 }
 
-                // The read succeeded, so anything below this point is a genuine
-                // "unset or corrupt" case where writing the default back is the
-                // correct behaviour.
+                // The settings read succeeded, but decoding below can still
+                // reveal unsupported or incomplete layouts and re-arm the
+                // read-only guard before constructing the fallback tiles.
                 self->setProperty(kDashLayoutLoadFailedProp, false);
 
                 if (result.value().isEmpty()) {
@@ -597,7 +596,34 @@ void DashboardScreen::restore_layout() {
                 const bool has_config = (lead == kDashLayoutMagic);
                 if (has_config) {
                     quint32 version = 0;
-                    stream >> version; // reserved for future migrations
+                    stream >> version;
+                    // Fail closed on any version we don't write ourselves: a blob
+                    // from a newer build may pack the header and items differently,
+                    // and decoding it as v1 misreads cols/row_h/margin/count and
+                    // corrupts every tile. Reject before touching the item stream.
+                    // A truncated header lands here too — version stays 0 on a
+                    // short read.
+                    if (stream.status() != QDataStream::Ok || version != kDashLayoutVersion) {
+                        // Never overwrite a newer-version layout with defaults.
+                        // apply_template() emits layout_changed; save_layout()
+                        // must refuse the resulting delayed write.
+                        self->setProperty(kDashLayoutLoadFailedProp, true);
+                        LOG_WARN("Dashboard",
+                                 QString("stored layout has unsupported or truncated version %1 (expected %2) — "
+                                         "showing read-only defaults without overwriting saved data")
+                                     .arg(version)
+                                     .arg(kDashLayoutVersion));
+                        self->build_default_layout();
+                        if (self->notif_toast_) {
+                            fincept::notifications::NotificationRecord rec;
+                            rec.request.title = tr("Saved dashboard layout is incompatible");
+                            rec.request.message = tr("A default dashboard is shown. Your saved layout will not "
+                                                     "be overwritten; use the newer Fincept version to restore it.");
+                            rec.request.level = fincept::notifications::NotifLevel::Warning;
+                            self->notif_toast_->show_notification(rec);
+                        }
+                        return;
+                    }
                     stream >> layout.cols >> layout.row_h >> layout.margin >> count;
                 } else {
                     layout.cols = static_cast<int>(lead);
@@ -642,6 +668,26 @@ void DashboardScreen::restore_layout() {
                     item.cell.x = qBound(0, item.cell.x, layout.cols - item.cell.w);
                     item.cell.y = qBound(0, item.cell.y, 999);
                     layout.items.append(item);
+                }
+
+                if (stream.status() != QDataStream::Ok) {
+                    // A truncated per-item record may leave several valid items
+                    // in memory. Never display this partial dashboard as a
+                    // successful restoration or overwrite the stored blob.
+                    self->setProperty(kDashLayoutLoadFailedProp, true);
+                    LOG_WARN("Dashboard",
+                             "Saved dashboard layout was truncated — showing read-only defaults; "
+                             "saved data is preserved");
+                    self->build_default_layout();
+                    if (self->notif_toast_) {
+                        fincept::notifications::NotificationRecord rec;
+                        rec.request.title = tr("Saved dashboard layout is incomplete");
+                        rec.request.message = tr("The saved dashboard could not be fully loaded. "
+                                                 "A default is shown and your saved layout will not be overwritten.");
+                        rec.request.level = fincept::notifications::NotifLevel::Warning;
+                        self->notif_toast_->show_notification(rec);
+                    }
+                    return;
                 }
 
                 if (layout.items.isEmpty()) {

@@ -10,6 +10,7 @@ Realistic backtesting with market microstructure:
 """
 
 import json
+import math
 import sys
 from typing import Dict, List, Any, Optional, Union, Tuple
 from datetime import datetime, timedelta
@@ -88,7 +89,24 @@ class OrderBook:
 
         Returns:
             (avg_execution_price, total_cost)
+
+        Raises:
+            ValueError: If quantity is not a positive finite number
         """
+        # JSON booleans are Python ints, but cannot represent order size.
+        # A huge integer or non-numeric input must fail with ValueError too,
+        # rather than leaking TypeError/OverflowError into an MCP result.
+        if isinstance(quantity, bool):
+            raise ValueError("Order quantity must be a positive finite number")
+        try:
+            finite_quantity = math.isfinite(quantity)
+        except (TypeError, ValueError, OverflowError):
+            finite_quantity = False
+        if not finite_quantity or quantity <= 0:
+            raise ValueError(
+                f"Order quantity must be a positive finite number, got {quantity!r}"
+            )
+
         if side == 'buy':
             book = sorted(self.asks.items())  # Ascending price
             base_price = self.best_ask if aggressive else self.best_bid

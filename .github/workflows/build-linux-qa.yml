@@ -365,7 +365,7 @@ jobs:
         QT_OPENGL: software
         QTWEBENGINE_DISABLE_SANDBOX: '1'
         QTWEBENGINE_CHROMIUM_FLAGS: --disable-gpu --no-sandbox --disable-gpu-compositing
-      run: 'set -euo pipefail
+      run: |
 
         APPIMAGE=dist/FinceptTerminal-Linux-x86_64.AppImage
 
@@ -380,7 +380,6 @@ jobs:
         timeout 35 "$APPIMAGE" --profile ci-packaged-mcp-shutdown --selftest-mcp-server > /tmp/fincept-mcp-lifecycle-ci.log 2>&1 || { tail -n 60 /tmp/fincept-mcp-lifecycle-ci.log; exit 1; }
         grep -q "60 passed, 0 failed" /tmp/fincept-mcp-lifecycle-ci.log
 
-        '
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:

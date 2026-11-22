@@ -32,7 +32,7 @@ constexpr const char* kQuoteLocalReceiptKey = "_fincept_local_received_at_utc";
 QuoteData read_cached_quote(const QJsonObject& o, QuoteDeliveryOrigin path) {
     QuoteData quote{o["symbol"].toString(), o["name"].toString(), o["price"].toDouble(),
                     o["change"].toDouble(), o["change_pct"].toDouble(), o["high"].toDouble(),
-                    o["low"].toDouble(), o["volume"].toDouble()};
+                    o["low"].toDouble(), o["volume"].toDouble(), QuoteDeliveryOrigin::Unknown, QString{}};
     quote.delivery_origin = path;
     quote.local_received_at_utc = o.value(kQuoteLocalReceiptKey).toString();
     return quote;
@@ -212,7 +212,7 @@ void MarketDataService::refresh(const QStringList& topics) {
                              q["change_percent"].toDouble(),
                              q["high"].toDouble(),
                              q["low"].toDouble(),
-                             q["volume"].toDouble()};
+                             q["volume"].toDouble(), QuoteDeliveryOrigin::Unknown, QString{}};
                 qd.delivery_origin = QuoteDeliveryOrigin::ProviderResponse;
                 qd.local_received_at_utc = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
 
@@ -442,7 +442,7 @@ void MarketDataService::flush_batch() {
                                     q["change_percent"].toDouble(),
                                     q["high"].toDouble(),
                                     q["low"].toDouble(),
-                                    q["volume"].toDouble()};
+                                    q["volume"].toDouble(), QuoteDeliveryOrigin::Unknown, QString{}};
                     quote.delivery_origin = QuoteDeliveryOrigin::ProviderResponse;
                     quote.local_received_at_utc = QDateTime::currentDateTimeUtc().toString(Qt::ISODateWithMs);
                     return quote;

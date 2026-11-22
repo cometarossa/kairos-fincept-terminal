@@ -30,7 +30,7 @@ class PublicYahooQABoundaries(unittest.TestCase):
         self.assertNotIn('public_history_subprocess_qa', cpp)
 
     def test_proxy_denies_ig_and_any_non_yahoo_domain(self):
-        from tests.fincept_original.public_yahoo_only_connect_proxy_v1 import parse_connect
+        from public_yahoo_only_connect_proxy_v1 import parse_connect
         self.assertIsNone(parse_connect(b'CONNECT demo-api.ig.com:443 HTTP/1.1'))
         self.assertIsNone(parse_connect(b'CONNECT api.ig.com:443 HTTP/1.1'))
         self.assertIsNone(parse_connect(b'CONNECT 169.254.169.254:80 HTTP/1.1'))

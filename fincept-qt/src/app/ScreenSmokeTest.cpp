@@ -8,6 +8,7 @@
 #include "datahub/DataHubMetaTypes.h"
 #include "datahub/TopicPolicy.h"
 #include "screens/dashboard/widgets/MarketQuoteStripWidget.h"
+#include "screens/dashboard/widgets/LoadingOverlay.h"
 #include "services/markets/MarketDataService.h"
 
 #include <QCoreApplication>
@@ -155,7 +156,9 @@ bool dashboard_quote_datahub_smoke() {
     spin(20); // process queued initial-value callbacks before new error
     hub.publish_error(topic, QStringLiteral("synthetic_after_hide_no_cache"));
     spin(20);
+    auto* original_overlay = widget.findChild<screens::widgets::LoadingOverlay*>();
     const bool preserved_after_hide = cache_absent && !hub.peek_raw(topic).isValid() &&
+                                      original_overlay && !original_overlay->is_active() &&
                                       price && change &&
                                       price->text() == QStringLiteral("125.00") &&
                                       change->text() == QStringLiteral("Last quote") &&
@@ -219,6 +222,7 @@ bool dashboard_quote_datahub_smoke() {
     screens::widgets::MarketQuoteStripWidget mixed(mixed_cfg);
     mixed.show();
     auto* mixed_host = mixed.findChild<QWidget*>(QStringLiteral("quoteStripRows"));
+    auto* mixed_overlay = mixed.findChild<screens::widgets::LoadingOverlay*>();
     auto* mixed_grid = mixed_host ? qobject_cast<QGridLayout*>(mixed_host->layout()) : nullptr;
     auto label_at = [mixed_grid](int row, int col) -> QLabel* {
         if (!mixed_grid)
@@ -238,6 +242,7 @@ bool dashboard_quote_datahub_smoke() {
     const bool mixed_first = mixed_good_price && mixed_good_change &&
                              mixed_good_price->text() == QStringLiteral("77.77") &&
                              mixed_good_change->text() == QStringLiteral("+0.77%") &&
+                             mixed_overlay && !mixed_overlay->is_active() &&
                              !mixed.is_waiting_for_first_data();
 
     // Remove cached A while the widget is unsubscribed, then resubscribe.
@@ -252,6 +257,7 @@ bool dashboard_quote_datahub_smoke() {
                mixed_good_change->text() == QStringLiteral("Last quote") &&
                mixed_empty_price->text() == QStringLiteral("—") &&
                mixed_empty_change->text() == QStringLiteral("Unavailable") &&
+               mixed_overlay && !mixed_overlay->is_active() &&
                !mixed.is_showing_error() && !mixed.is_waiting_for_first_data();
     };
     mixed.show();
@@ -280,6 +286,7 @@ bool dashboard_quote_datahub_smoke() {
         mixed_good_change->text() == QStringLiteral("Last quote") &&
         mixed_empty_price->text() == QStringLiteral("55.55") &&
         mixed_empty_change->text() == QStringLiteral("+1.50%") &&
+        mixed_overlay && !mixed_overlay->is_active() &&
         !mixed.is_showing_error() && !mixed.is_waiting_for_first_data();
     mixed.hide();
     hub.unsubscribe(&mixed);

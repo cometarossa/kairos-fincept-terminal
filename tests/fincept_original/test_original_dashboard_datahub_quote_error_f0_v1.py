@@ -75,7 +75,7 @@ class OriginalQuoteErrorF0(unittest.TestCase):
         self.assertIn("ci-quote-error-smoke 540", workflow)
 
 
-    def test_expired_cache_hide_show_keeps_last_good_row_and_separate_progress(self):
+    def test_missing_cache_hide_show_keeps_last_good_row_and_separate_progress(self):
         header = (ROOT / "fincept-qt/src/screens/dashboard/widgets/MarketQuoteStripWidget.h").read_text()
         self.assertIn("QSet<QString> has_quote_;", header)
         self.assertIn("has_quote_.clear();", self.strip)

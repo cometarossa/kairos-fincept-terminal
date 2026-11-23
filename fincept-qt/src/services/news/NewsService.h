@@ -161,6 +161,10 @@ class NewsService : public QObject, public fincept::datahub::Producer {
     void refresh(const QStringList& topics) override;
     int max_requests_per_sec() const override; // RSS — cap at 2/s
 
+    // F2: force cache-only in a dedicated original headless research process.
+    // The guard is checked INSIDE fetch_all_news after cache lookup, avoiding
+    // TOCTOU egress if the cache expires between MCP dispatch and service use.
+    void enforce_cache_only_mode() { cache_only_mode_.store(true); }
     void fetch_all_news(bool force, ArticlesCallback cb);
     void analyze_article(const QString& url, AnalysisCallback cb);
 
@@ -286,6 +290,7 @@ class NewsService : public QObject, public fincept::datahub::Producer {
     /// a newer list superseded before it landed is dropped.
     static void store_cache_async(const QVector<NewsArticle>& articles);
 
+    std::atomic<bool> cache_only_mode_{false};
     QNetworkAccessManager* nam_ = nullptr;
     QTimer* refresh_timer_ = nullptr;
     static constexpr int kArticleCacheTtlSec = 600; // 10 min

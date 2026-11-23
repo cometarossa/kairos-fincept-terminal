@@ -2114,6 +2114,7 @@ set(SCREEN_SOURCES
 # App
 set(APP_SOURCES
     src/app/main.cpp
+    src/app/ReadonlyNewsMcpService.cpp
     src/app/InstanceLock.cpp
     src/app/ScreenSmokeTest.cpp
     # WindowFrame is split across multiple files; see WindowFrame.cpp header

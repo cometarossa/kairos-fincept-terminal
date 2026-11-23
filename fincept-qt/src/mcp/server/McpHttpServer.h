@@ -76,6 +76,10 @@ class McpHttpServer : public QObject {
     static constexpr quint16 kDefaultPort = 41720;
     static constexpr int kPortFallbackRange = 20; // tries port..port+20 when busy
 
+    // Explicit original F2 read-only news service startup, with an in-memory
+    // bearer token and exact loopback port. Never persists settings.
+    bool configure_readonly_news_service(quint16 port, const QString& token);
+
     /// Bind and start serving. Idempotent. Returns true when listening.
     bool start();
     /// Stop listening and drop every live connection.

@@ -385,6 +385,42 @@ jobs:
         timeout 35 "$APPIMAGE" --profile ci-packaged-arena-shutdown --selftest-arena > /tmp/fincept-arena-lifecycle-ci.log 2>&1 || { tail -n 60 /tmp/fincept-arena-lifecycle-ci.log; exit 1; }
         grep -Fq "0 failure(s)" /tmp/fincept-arena-lifecycle-ci.log
 
+    - name: F2 original Linux AppImage read-only NEWS MCP lifecycle (no network)
+      if: runner.os == 'Linux'
+      timeout-minutes: 8
+      shell: bash
+      run: |
+        set -euo pipefail
+        APP="$GITHUB_WORKSPACE/fincept-qt/dist/FinceptTerminal-Linux-x86_64.AppImage"
+        test -s "$APP"
+        sha256sum "$APP" | cut -d' ' -f1 | awk '{print "FINCEPT_F2_ORIGINAL_APPIMAGE_SHA256=" $1}'
+        # Build dependencies ONLY; actual AppImage, Qt MCP and pytest test run
+        # later without any external network device or broker credentials.
+        docker build -t fincept-original-f2-readonly-qa:ci - < .github/qa/FinceptReadonlyNewsDockerfile
+        docker run --rm \
+          --network none \
+          --read-only \
+          --cap-drop ALL \
+          --security-opt no-new-privileges \
+          --user 10001:10001 \
+          --pids-limit 256 \
+          --memory 4g \
+          --cpus 2 \
+          --shm-size 512m \
+          --tmpfs /tmp:rw,exec,nosuid,size=1900m \
+          --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/work/repo,readonly" \
+          --env APPIMAGE_EXTRACT_AND_RUN=1 \
+          --env QT_QPA_PLATFORM=offscreen \
+          --env QT_OPENGL=software \
+          --env QTWEBENGINE_DISABLE_SANDBOX=1 \
+          --env QTWEBENGINE_CHROMIUM_FLAGS="--disable-gpu --no-sandbox --disable-gpu-compositing" \
+          --env PYTHONDONTWRITEBYTECODE=1 \
+          --env FINCEPT_F2_NATIVE_BIN=/work/repo/fincept-qt/dist/FinceptTerminal-Linux-x86_64.AppImage \
+          fincept-original-f2-readonly-qa:ci \
+          /usr/bin/python3 -m pytest -q -p no:cacheprovider \
+          tests/fincept_original/test_headless_readonly_news_service_f2_v1.py
+        echo "FINCEPT_ORIGINAL_LINUX_F2_NEWS_READONLY_LIFECYCLE_PASS broker_calls=0 external_egress=false"
+
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:

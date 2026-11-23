@@ -88,6 +88,8 @@ QString generate_token() {
 // ── Impl helpers ─────────────────────────────────────────────────────────────
 
 QString McpHttpServer::Impl::effective_token() const {
+    if (readonly_news_service_mode)
+        return readonly_news_service_token;
     return test_mode ? test_token : load_or_create_token();
 }
 
@@ -114,7 +116,9 @@ QString McpHttpServer::Impl::load_or_create_token() const {
 }
 
 QString McpHttpServer::Impl::effective_url() const {
-    quint16 p = server ? static_cast<quint16>(server->serverPort()) : (test_mode ? test_port : configured_port);
+    quint16 p = server ? static_cast<quint16>(server->serverPort())
+                       : (readonly_news_service_mode ? readonly_news_service_port
+                                                     : (test_mode ? test_port : configured_port));
     if (p == 0)
         p = configured_port;
     return QStringLiteral("http://127.0.0.1:%1/mcp").arg(p);
@@ -198,8 +202,11 @@ bool McpHttpServer::start() {
     auto* srv = new QTcpServer(this);
     quint16 bound = 0;
     QString err;
-    const quint16 first = d_->test_mode ? d_->test_port : d_->configured_port;
-    const int last = d_->test_mode ? first : std::min(65535, static_cast<int>(first) + kPortFallbackRange);
+    const quint16 first = d_->readonly_news_service_mode ? d_->readonly_news_service_port
+                                                           : (d_->test_mode ? d_->test_port : d_->configured_port);
+    const int last = (d_->test_mode || d_->readonly_news_service_mode)
+                         ? first
+                         : std::min(65535, static_cast<int>(first) + kPortFallbackRange);
     for (int p = first; p <= last; ++p) {
         if (srv->listen(QHostAddress::LocalHost, static_cast<quint16>(p))) {
             bound = static_cast<quint16>(srv->serverPort());
@@ -226,7 +233,7 @@ bool McpHttpServer::start() {
             LOG_WARN(kTag, QStringLiteral("Accept failed: %1").arg(d_->server->errorString()));
     });
     ++d_->epoch;
-    d_->last_error = (!d_->test_mode && bound != first)
+    d_->last_error = (!d_->test_mode && !d_->readonly_news_service_mode && bound != first)
                          ? QStringLiteral("Port %1 was in use; listening on %2 instead — clients configured for port "
                                           "%1 need the new URL.")
                                .arg(first)
@@ -343,6 +350,11 @@ bool McpHttpServer::allow_actions() const {
 }
 
 void McpHttpServer::set_allow_actions(bool on) {
+    // No caller may promote the F2 news-only service to an action-enabled MCP.
+    if (d_->readonly_news_service_mode) {
+        d_->shared->allow_actions.store(false);
+        return;
+    }
     using namespace mcp_http_detail;
     if (d_->test_mode) { // self-test: in memory only
         d_->shared->allow_actions.store(on);
@@ -365,6 +377,8 @@ ExternalToolset McpHttpServer::toolset() const {
 }
 
 void McpHttpServer::set_toolset(ExternalToolset t) {
+    if (d_->readonly_news_service_mode)
+        return;
     if (d_->toolset == t)
         return;
     d_->toolset = t;
@@ -378,6 +392,8 @@ quint16 McpHttpServer::configured_port() const {
 }
 
 void McpHttpServer::set_configured_port(quint16 port) {
+    if (d_->readonly_news_service_mode)
+        return;
     using namespace mcp_http_detail;
     if (port < kMinUserPort) {
         LOG_WARN(kTag, QStringLiteral("Ignoring MCP server port %1 — use 1024-65535").arg(port));
@@ -497,7 +513,30 @@ QStringList McpHttpServer::codex_config_overrides() const {
 
 // ── Self-test hooks ──────────────────────────────────────────────────────────
 
+bool McpHttpServer::configure_readonly_news_service(quint16 port, const QString& token) {
+    // Never reuse persisted tokens or the finite QA test override.
+    if (!QCoreApplication::instance() ||
+        QCoreApplication::applicationName() != QLatin1String("FinceptReadonlyNews") ||
+        !QCoreApplication::arguments().contains(QStringLiteral("--serve-readonly-news")) ||
+        d_->server || d_->test_mode || d_->readonly_news_service_mode ||
+        port < mcp_http_detail::kMinUserPort || token.size() < 64 || token.size() > 128)
+        return false;
+    for (const QChar c : token) {
+        if (!((c >= u'A' && c <= u'Z') || (c >= u'a' && c <= u'z') ||
+              (c >= u'0' && c <= u'9') || c == u'-' || c == u'_'))
+            return false;
+    }
+    d_->readonly_news_service_mode = true;
+    d_->readonly_news_service_port = port;
+    d_->readonly_news_service_token = token;
+    d_->shared->allow_actions.store(false);
+    d_->toolset = ExternalToolset::Essentials;
+    return true;
+}
+
 void McpHttpServer::set_selftest_overrides(quint16 port, const QString& token, bool allow_actions) {
+    if (d_->readonly_news_service_mode)
+        return;
     d_->test_mode = true;
     d_->test_port = port;
     d_->test_token = token;
@@ -505,6 +544,11 @@ void McpHttpServer::set_selftest_overrides(quint16 port, const QString& token, b
 }
 
 void McpHttpServer::clear_selftest_overrides() {
+    if (d_->readonly_news_service_mode) {
+        // A self-test cleanup must never restore persisted GUI actions in F2.
+        d_->shared->allow_actions.store(false);
+        return;
+    }
     d_->test_mode = false;
     d_->test_port = 0;
     d_->test_token.clear();

@@ -1,0 +1,27 @@
+# Fincept original NewsService — publisher date provenance F0/F1 (2026-11-23)
+
+## Original runtime defect and bounded fix
+
+The existing original Fincept RSS/Atom parser previously set NewsArticle.sort_ts to **local now** when no valid feed datetime existed. That is useful only for display sorting: it cannot establish article publication age. The original MCP get_news exposed only display text `time`, not parsed source date evidence, so a consumer could not distinguish missing/invalid/future date from publisher-supplied date.
+
+This patch keeps the original UI sort behavior and all default MCP get_news response fields unchanged. It adds separate `NewsArticle.publisher_datetime_ts` (Unix seconds, zero means unknown) and `publisher_datetime_field` (RSS/Atom tag pubDate/published/updated/date, empty means unknown). Only a successfully parsed positive date not more than 300 seconds in the future receives source date metadata. An invalid, future or absent date continues to use existing local sort fallback but has NO publisher date metadata. The date tag is explicitly retained: an Atom `updated` clock is **not** equivalent to initial article publication.
+
+The original NewsService cache round-trip now preserves these two fields, and old cache snapshots missing them intentionally remain unknown. No special request, new feed, broker client or provider is installed.
+
+The original MCP `get_news` now accepts an **optional** `include_publisher_datetime` boolean, default **false**. Only when explicitly true does each article additionally contain `publisher_datetime_unix` (number or JSON null), `publisher_datetime_field` (the parsed RSS tag or `unknown`), and `publisher_datetime_attested=false`. The last flag always remains false: publisher-reported XML time is NOT independent exchange/venue as-of, not a guaranteed fresh delivery timestamp, and not permission to trade. Existing KAIROS `fincept.news.read` remains wire-compatible because it never sends the new flag and rejects unexpected fields.
+
+## Reproducible QA
+
+- Baseline Fincept main SHA: `a412b661bea0ee8498f284f86f22af0fdc1e783c`.
+- Native original `--selftest-feeds` now includes a **friend-access-only** in-memory test of the original NewsService RSS parser and cached JSON round-trip. It asserts old valid pubDate, missing date, invalid date, far future date, Atom updated date, and legacy cached article with no provenance. No provider network is required.
+- Independent Python source-contract tests check split timestamp field, two parse paths, cache, and optional MCP fields. The actual Qt native runtime acceptance remains gated on Linux/Qt CI; source tests and C++ syntax are not substitutes for that.
+- On authorized iMac, all 4 touched C++ translation units passed clang `-fsyntax-only` using existing Qt 6.8.3 CMake compile flags. This is **not** a full AppImage build or an original Linux runtime proof.
+- No IG connection/order, trading authority, paid provider calls, external news fetch or continuous service.
+
+## Next required end-to-end admission
+
+1. Exact-head Linux Qt build, `--selftest-feeds` with the new native parser/cache marker PASS, packaged AppImage and native MCP clean exit 0. Do not equate a completed build with a real news feed.
+2. Add an explicitly versioned KAIROS publisher-date research reader, using the EXISTING Fincept loopback client and `include_publisher_datetime=true`; retain `FINCEPT_UNAVAILABLE` for missing or implausible publisher dates and never accept local fallback sort_ts as publication.
+3. In a bounded, public-RSS-only network sandbox, fetch **one** permitted real original Fincept feed, audit link/domain/source/date tag, record the timestamp and cache provenance separately, and verify true Qt/MCP → KAIROS read. No new IG session, provider account, broker execution or LIVE path.
+
+**Current status:** source regression candidate. Market news freshness, cross-provider corroboration and scientific/execution authority are **not verified**.

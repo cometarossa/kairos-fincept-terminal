@@ -127,8 +127,11 @@ QVector<NewsArticle> NewsService::parse_rss_xml(const QByteArray& xml, const RSS
                         dt = QDateTime::fromString(text, Qt::ISODate);
                     if (!dt.isValid())
                         dt = QDateTime::fromString(text, "ddd, dd MMM yyyy HH:mm:ss");
-                    if (dt.isValid()) {
+                    if (dt.isValid() && dt.toSecsSinceEpoch() > 0 &&
+                        dt.toSecsSinceEpoch() <= QDateTime::currentSecsSinceEpoch() + kNewsMaxFutureSkewSec) {
                         current.sort_ts = dt.toSecsSinceEpoch();
+                        current.publisher_datetime_ts = current.sort_ts;
+                        current.publisher_datetime_field = current_tag;
                         current.time = dt.toLocalTime().toString("MMM dd, HH:mm");
                     } else {
                         // Named zones (IST, PDT...), epoch values, "05-Jun-2026 ..." —
@@ -137,8 +140,11 @@ QVector<NewsArticle> NewsService::parse_rss_xml(const QByteArray& xml, const RSS
                         // pins an old story to the top of the list.
                         QString display;
                         const qint64 parsed_ts = fincept::feeds::parse_feed_datetime(text, display);
-                        if (parsed_ts > 0) {
+                        if (parsed_ts > 0 &&
+                            parsed_ts <= QDateTime::currentSecsSinceEpoch() + kNewsMaxFutureSkewSec) {
                             current.sort_ts = parsed_ts;
+                            current.publisher_datetime_ts = parsed_ts;
+                            current.publisher_datetime_field = current_tag;
                             current.time = QDateTime::fromSecsSinceEpoch(parsed_ts).toString("MMM dd, HH:mm");
                         } else {
                             current.time = text.left(22);
@@ -159,6 +165,9 @@ QVector<NewsArticle> NewsService::parse_rss_xml(const QByteArray& xml, const RSS
                 if (current.sort_ts == 0 || current.sort_ts > now_ts + kNewsMaxFutureSkewSec) {
                     current.sort_ts = now_ts;
                     current.time = QDateTime::fromSecsSinceEpoch(now_ts).toString("MMM dd, HH:mm");
+                    // Never re-label the local fallback as a publisher date.
+                    current.publisher_datetime_ts = 0;
+                    current.publisher_datetime_field.clear();
                 }
 
                 // Untrusted link: keep web URLs only (see is_web_url()).

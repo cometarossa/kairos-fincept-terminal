@@ -144,6 +144,8 @@ std::vector<ToolDef> get_news_tools() {
                              .between(1, 100)
                              .boolean("force", "Force refresh ignoring cache")
                              .default_bool(false)
+                             .boolean("include_publisher_datetime", "Opt in to publisher RSS/Atom time evidence, or null if unavailable")
+                             .default_bool(false)
                              .build();
         t.handler = [](const QJsonObject& args) -> ToolResult {
             // Defaults are now injected by the validator; the .toString(...)
@@ -154,6 +156,7 @@ std::vector<ToolDef> get_news_tools() {
             QString query = args["query"].toString();
             int limit = qBound(1, args["limit"].toInt(20), 100);
             bool force = args["force"].toBool(false);
+            bool include_publisher_datetime = args["include_publisher_datetime"].toBool(false);
 
             auto all = fetch_articles_sync(force);
             if (all.isEmpty())
@@ -167,8 +170,22 @@ std::vector<ToolDef> get_news_tools() {
                 filtered.resize(limit);
 
             QJsonArray result;
-            for (const auto& a : filtered)
-                result.append(article_to_json(a));
+            for (const auto& a : filtered) {
+                QJsonObject article = article_to_json(a);
+                if (include_publisher_datetime) {
+                    const bool source_date_available = a.publisher_datetime_ts > 0 &&
+                                                       !a.publisher_datetime_field.isEmpty();
+                    article["publisher_datetime_unix"] =
+                        source_date_available ? QJsonValue(static_cast<qint64>(a.publisher_datetime_ts))
+                                              : QJsonValue(QJsonValue::Null);
+                    article["publisher_datetime_field"] =
+                        source_date_available ? a.publisher_datetime_field : QStringLiteral("unknown");
+                    // Publisher-claimed publication/update time is NOT independent
+                    // verification of market as-of, feed freshness or accuracy.
+                    article["publisher_datetime_attested"] = false;
+                }
+                result.append(article);
+            }
 
             LOG_DEBUG(kNewsToolsTag, QString("get_news: %1/%2 articles").arg(filtered.size()).arg(all.size()));
 

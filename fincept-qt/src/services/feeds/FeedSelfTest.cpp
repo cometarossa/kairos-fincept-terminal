@@ -3,11 +3,66 @@
 #include "services/feeds/FeedParseUtil.h"
 #include "services/feeds/FeedScraper.h"
 #include "services/feeds/FeedTypes.h"
+#include "services/news/NewsService.h"
 
 #include <QDateTime>
 #include <QString>
 
 #include <cstdio>
+
+namespace fincept::services {
+
+// Friend-only offline regression of the actual original NewsService RSS
+// parser and cache; cannot start a provider, GUI, MCP or network request.
+struct NewsSourceDateQA {
+    static bool run() {
+        RSSFeed feed{"qa-publisher", "QA", "https://example.invalid/rss",
+                     "MARKETS", "GLOBAL", "TEST", 2};
+        const QByteArray rss =
+            "<rss><channel>"
+            "<item><title>Known publisher date</title><link>https://example.invalid/a</link>"
+            "<pubDate>Wed, 04 Jun 2025 10:00:00 GMT</pubDate></item>"
+            "<item><title>Missing publisher date</title><link>https://example.invalid/b</link></item>"
+            "<item><title>Invalid publisher date</title><link>https://example.invalid/c</link>"
+            "<pubDate>not-a-real-date</pubDate></item>"
+            "<item><title>Future publisher date</title><link>https://example.invalid/d</link>"
+            "<pubDate>Wed, 04 Jun 2099 10:00:00 GMT</pubDate></item>"
+            "<item><title>Updated is not published</title><link>https://example.invalid/e</link>"
+            "<updated>2025-06-04T10:00:00Z</updated></item>"
+            "</channel></rss>";
+        const auto a = NewsService::parse_rss_xml(rss, feed);
+        const qint64 expected = QDateTime::fromString(
+            "2025-06-04T10:00:00Z", Qt::ISODate).toSecsSinceEpoch();
+        if (a.size() != 5 || a[0].publisher_datetime_ts != expected ||
+            a[0].publisher_datetime_field != "pubDate" ||
+            a[1].publisher_datetime_ts != 0 || !a[1].publisher_datetime_field.isEmpty() ||
+            a[2].publisher_datetime_ts != 0 || !a[2].publisher_datetime_field.isEmpty() ||
+            a[3].publisher_datetime_ts != 0 || !a[3].publisher_datetime_field.isEmpty() ||
+            a[4].publisher_datetime_ts != expected ||
+            a[4].publisher_datetime_field != "updated") {
+            return false;
+        }
+        // Only sorting falls back to now; it MUST NOT promote the guessed
+        // arrival clock to source-claimed publication clock.
+        if (a[1].sort_ts <= 0 || a[2].sort_ts <= 0 || a[3].sort_ts <= 0)
+            return false;
+        const auto restored = NewsService::deserialize_articles(NewsService::serialize_articles(a));
+        if (restored.size() != 5 || restored[0].publisher_datetime_ts != expected ||
+            restored[0].publisher_datetime_field != "pubDate" ||
+            restored[1].publisher_datetime_ts != 0 ||
+            restored[4].publisher_datetime_field != "updated") {
+            return false;
+        }
+        // Legacy persisted articles cannot acquire a publisher clock from
+        // their synthetic sort_ts when the new fields are absent.
+        const QString legacy = R"([{"headline":"Old story","sort_ts":1795000000}])";
+        const auto old = NewsService::deserialize_articles(legacy);
+        return old.size() == 1 && old[0].publisher_datetime_ts == 0 &&
+               old[0].publisher_datetime_field.isEmpty();
+    }
+};
+
+} // namespace fincept::services
 
 namespace fincept::feeds {
 
@@ -167,6 +222,9 @@ int run_feed_selftest() {
         check("date dd/MMM/yyyy", parse_feed_datetime("05/Jun/2026", disp) != 0);
         check("date garbage -> 0", parse_feed_datetime("not a date", disp) == 0);
     }
+
+    check("news: RSS publisher date never replaced by arrival / survives cache",
+          fincept::services::NewsSourceDateQA::run());
 
     std::printf("\nfeed selftest: %s (%d failures)\n", failures == 0 ? "OK" : "FAILED", failures);
     return failures == 0 ? 0 : 1;

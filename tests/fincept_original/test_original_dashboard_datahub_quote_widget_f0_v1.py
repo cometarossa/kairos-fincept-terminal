@@ -38,6 +38,7 @@ class OriginalDashboardDataHubQuoteWidgetF0(unittest.TestCase):
 
     def test_smoke_uses_qatopic_not_a_realtime_asset(self):
         self.assertIn('FINCEPT_QA_SYNTHETIC_ONLY', self.smoke)
+        self.assertIn('services::QuoteDeliveryOrigin::Unknown, QString{}', self.smoke)
         self.assertNotIn('SPY', self.smoke)
         self.assertIn('void spin(int ms)', self.smoke)
         self.assertIn('bool dashboard_quote_datahub_smoke()', self.smoke)

@@ -78,7 +78,8 @@ bool dashboard_quote_datahub_smoke() {
     // production widget consumes the production DataHub topic and paints its
     // price and change labels, rather than sitting on the loading overlay.
     const services::QuoteData quote{symbol, symbol, 123.45, 1.50, 1.25,
-                                    124.0, 122.0, 0.0};
+                                    124.0, 122.0, 0.0,
+                                    services::QuoteDeliveryOrigin::Unknown, QString{}};
     hub.publish(topic, QVariant::fromValue(quote));
 
     QJsonArray symbols;

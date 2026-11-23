@@ -19,7 +19,9 @@ class PublisherDateContract(unittest.TestCase):
     def test_news_feed_parser_never_labels_fallback_now_as_publication(self):
         s = (ROOT / "services/news/NewsService_Parsing.cpp").read_text()
         self.assertEqual(s.count("current.publisher_datetime_ts = current.sort_ts;"), 1)
-        self.assertEqual(s.count("current.publisher_datetime_ts = parsed_ts;"), 1)
+        self.assertNotIn("current.publisher_datetime_ts = parsed_ts;", s)
+        self.assertIn("source_clock_explicit && dt.isValid()", s)
+        self.assertIn("parse_feed_datetime(text, display)", s)
         self.assertIn("current.publisher_datetime_ts = 0;", s)
         self.assertIn("current.publisher_datetime_field.clear();", s)
         self.assertIn("kNewsMaxFutureSkewSec", s)
@@ -51,7 +53,13 @@ class PublisherDateContract(unittest.TestCase):
         self.assertIn("NewsService::deserialize_articles", s)
         self.assertIn('NewsSourceDateQA::run()', s)
         self.assertIn('Future publisher date', s)
+        self.assertIn("2025-06-04Tnot-a-time", s)
+        self.assertIn("Date only has no UTC clock", s)
         self.assertIn('Legacy persisted articles', s)
+        self.assertIn("FINCEPT_QA_PUBLIC_RSS_FILE", s)
+        self.assertIn("NewsSourceDateQA::run_public_rss_file()", s)
+        self.assertIn("recent_24h_https", s)
+        self.assertIn("file.size() > 200000", s)
 
 
 if __name__ == "__main__":

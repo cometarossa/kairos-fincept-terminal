@@ -127,24 +127,31 @@ QVector<NewsArticle> NewsService::parse_rss_xml(const QByteArray& xml, const RSS
                         dt = QDateTime::fromString(text, Qt::ISODate);
                     if (!dt.isValid())
                         dt = QDateTime::fromString(text, "ddd, dd MMM yyyy HH:mm:ss");
-                    if (dt.isValid() && dt.toSecsSinceEpoch() > 0 &&
+                    // Only fully parsed RFC/ISO datetime with an explicit
+                    // UTC/offset suffix is publisher DATE evidence. The generic
+                    // parse_feed_datetime() parser is intentionally lenient:
+                    // its final ISO-substring recovery invents local midnight.
+                    // It may help sort the original GUI but MUST NOT be
+                    // promoted to a publisher-supplied publication instant.
+                    static const QRegularExpression explicit_tz(
+                        R"((?:Z|GMT|UTC|UT|[+-]\d{2}:?\d{2})$)",
+                        QRegularExpression::CaseInsensitiveOption);
+                    const bool source_clock_explicit = explicit_tz.match(text.trimmed()).hasMatch();
+                    if (source_clock_explicit && dt.isValid() && dt.toSecsSinceEpoch() > 0 &&
                         dt.toSecsSinceEpoch() <= QDateTime::currentSecsSinceEpoch() + kNewsMaxFutureSkewSec) {
                         current.sort_ts = dt.toSecsSinceEpoch();
                         current.publisher_datetime_ts = current.sort_ts;
                         current.publisher_datetime_field = current_tag;
                         current.time = dt.toLocalTime().toString("MMM dd, HH:mm");
                     } else {
-                        // Named zones (IST, PDT...), epoch values, "05-Jun-2026 ..." —
-                        // the shared feed parser covers what Qt's stock formats don't.
-                        // An undated item otherwise falls back to "now" below and
-                        // pins an old story to the top of the list.
+                        // Legacy display sorting may use named zones, date-only
+                        // strings or heuristic recovery. All remain UNKNOWN
+                        // for opt-in publisher-clock provenance.
                         QString display;
                         const qint64 parsed_ts = fincept::feeds::parse_feed_datetime(text, display);
                         if (parsed_ts > 0 &&
                             parsed_ts <= QDateTime::currentSecsSinceEpoch() + kNewsMaxFutureSkewSec) {
                             current.sort_ts = parsed_ts;
-                            current.publisher_datetime_ts = parsed_ts;
-                            current.publisher_datetime_field = current_tag;
                             current.time = QDateTime::fromSecsSinceEpoch(parsed_ts).toString("MMM dd, HH:mm");
                         } else {
                             current.time = text.left(22);

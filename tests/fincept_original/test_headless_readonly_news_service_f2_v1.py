@@ -84,12 +84,38 @@ def test_lifecycle_is_bounded_and_no_qa_shortcut():
     assert "FINCEPT_F2_DENIED_" in SOURCE
 
 
-def native_bin():
+@pytest.fixture(scope="session")
+def native_bin(tmp_path_factory):
     candidate = os.environ.get("FINCEPT_F2_NATIVE_BIN", "")
     if not candidate:
         pytest.skip("Native binary not supplied: source test only")
     p = Path(candidate)
     assert p.is_file() and p.is_absolute()
+    if sys.platform == "linux" and p.suffix == ".AppImage":
+        # extract-and-run retains an outer runtime process. A SIGTERM sent
+        # to that PID is not proof that the original Qt service received it.
+        # Extract the EXACT packaged artifact once, in private QA scratch,
+        # then launch its own AppRun directly. This is the proposed daemon
+        # launch contract; the raw extract-and-run launcher is NOT certified.
+        scratch = tmp_path_factory.mktemp("fincept-f2-appdir")
+        scratch.chmod(0o700)
+        extraction = subprocess.run(
+            [str(p), "--appimage-extract"],
+            cwd=scratch,
+            env={"HOME": str(scratch), "TMPDIR": str(scratch),
+                 "PATH": "/usr/bin:/bin", "LC_ALL": "C.UTF-8"},
+            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+            timeout=90, check=False,
+        )
+        assert extraction.returncode == 0, extraction.stderr[-1000:]
+        appdir = scratch / "squashfs-root"
+        entry = appdir / "AppRun"
+        payload = appdir / "usr/bin/FinceptTerminal"
+        assert entry.is_file() and os.access(entry, os.X_OK)
+        assert payload.is_file() and os.access(payload, os.X_OK)
+        assert entry.resolve().is_relative_to(appdir.resolve())
+        assert payload.resolve().is_relative_to(appdir.resolve())
+        return str(entry)
     return str(p)
 
 
@@ -160,8 +186,8 @@ def rpc(method, ident=1, params=None):
     return {"jsonrpc": "2.0", "id": ident, "method": method, "params": params or {}}
 
 
-def test_invalid_permissions_refused_before_qt_or_network():
-    binary = native_bin()
+def test_invalid_permissions_refused_before_qt_or_network(native_bin):
+    binary = native_bin
     with tempfile.TemporaryDirectory(prefix="fincept-f2-reject-", dir="/private/tmp" if sys.platform == "darwin" else None) as name:
         home = Path(name)
         private_profile(home, insecure=True)
@@ -174,8 +200,8 @@ def test_invalid_permissions_refused_before_qt_or_network():
         assert "READY" not in r.stdout
 
 
-def test_denied_without_explicit_ack_or_ambiguous_argv():
-    binary = native_bin()
+def test_denied_without_explicit_ack_or_ambiguous_argv(native_bin):
+    binary = native_bin
     with tempfile.TemporaryDirectory(prefix="fincept-f2-no-ack-", dir="/private/tmp" if sys.platform == "darwin" else None) as name:
         home = Path(name)
         private_profile(home)
@@ -191,8 +217,8 @@ def test_denied_without_explicit_ack_or_ambiguous_argv():
         assert r.returncode == 2
 
 
-def test_actual_original_service_authenticated_cache_only_and_sigterm():
-    binary = native_bin()
+def test_actual_original_service_authenticated_cache_only_and_sigterm(native_bin):
+    binary = native_bin
     with tempfile.TemporaryDirectory(prefix="fincept-f2-native-", dir="/private/tmp" if sys.platform == "darwin" else None) as name:
         home = Path(name)
         bearer = private_profile(home)
@@ -204,7 +230,8 @@ def test_actual_original_service_authenticated_cache_only_and_sigterm():
             policy = '(version 1) (allow default) (deny network-outbound (remote ip "*:*")) (allow network-outbound (remote ip "localhost:*"))'
             cmd = ["/usr/bin/sandbox-exec", "-p", policy, *cmd]
         with output_file.open("w+") as log:
-            child = subprocess.Popen(cmd, env=env, stdout=log, stderr=subprocess.STDOUT)
+            child = subprocess.Popen(cmd, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                     start_new_session=True)
             try:
                 deadline = time.monotonic() + 22
                 while time.monotonic() < deadline:
@@ -219,6 +246,10 @@ def test_actual_original_service_authenticated_cache_only_and_sigterm():
                     time.sleep(.15)
                 else:
                     raise AssertionError("Original service did not become healthy")
+                if sys.platform == "linux" and Path(binary).name == "AppRun":
+                    # No wrapper status masquerading as an actual Qt exit.
+                    expected = (Path(binary).parent / "usr/bin/FinceptTerminal").resolve()
+                    assert Path(f"/proc/{child.pid}/exe").resolve(strict=True) == expected
                 assert request(port, "POST", rpc("tools/list"))[0] == 401
                 code, resp = request(port, "POST", rpc("tools/list"), bearer)
                 assert code == 200, (code, resp)
@@ -299,9 +330,19 @@ def test_actual_original_service_authenticated_cache_only_and_sigterm():
                     except subprocess.TimeoutExpired:
                         child.kill()
                         child.wait(timeout=4)
+                if child.returncode != 0:
+                    # Only failure cleanup for our isolated test process group.
+                    # Never convert forced termination into a PASS.
+                    try:
+                        os.killpg(child.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
         text = output_file.read_text(errors="replace")
         assert child.returncode == 0, (child.returncode, text[-2000:])
         assert "FINCEPT_F2_READONLY_NEWS_READY" in text
         assert "FINCEPT_F2_READONLY_NEWS_STOPPED" in text
+        with socket.socket() as probe:
+            probe.settimeout(1)
+            assert probe.connect_ex(("127.0.0.1", port)) != 0, "MCP listener survived shutdown"
         assert bearer not in text
         assert "IGDemoCanonicalAdapter" not in text

@@ -7,12 +7,15 @@
 #include "mcp/server/EssentialTools.h"
 #include "mcp/server/McpHttpServer.h"
 #include "services/markets/MarketDataService.h"
+#include "services/news/NewsService.h"
 #include "python/PythonRunner.h"
 #include "services/markets/HistoryIntegrity.h"
 #include "storage/cache/CacheManager.h"
 #include "storage/sqlite/CacheDatabase.h"
 
+#include <QDateTime>
 #include <QElapsedTimer>
+#include <QFile>
 #include <QEventLoop>
 #include <QFileInfo>
 #include <QProcess>
@@ -31,6 +34,22 @@
 #include <algorithm>
 #include <cstdio>
 #include <functional>
+
+// Internal friend-only source fixture: the *original* NewsService parser and
+// cache codec are called for an operator-captured public RSS file. No new API
+// is exposed to the GUI, MCP client, broker or production callers.
+namespace fincept::services {
+struct NewsMcpPublicRssQA {
+    static QVector<NewsArticle> parse(const QByteArray& xml) {
+        const RSSFeed feed{"qa-news-mcp", "Public QA source", "https://search.cnbc.com/",
+                           "MARKETS", "GLOBAL", "CNBC", 2};
+        return NewsService::parse_rss_xml(xml, feed);
+    }
+    static QString encode(const QVector<NewsArticle>& articles) {
+        return NewsService::serialize_articles(articles);
+    }
+};
+}
 
 namespace fincept::mcp {
 
@@ -617,6 +636,156 @@ int run_mcp_server_selftest() {
                       QStringLiteral("real public Yahoo history passed original Qt MCP to external KAIROS"),
                       QStringLiteral("child status=%1; stage=%2")
                           .arg(client.exitCode()).arg(failure_stage));
+            }
+        }
+    }
+
+    // F1: actual public-source RSS -> ORIGINAL NewsService::parse_rss_xml ->
+    // ORIGINAL CacheManager -> ORIGINAL get_news MCP -> separately maintained
+    // KAIROS Python research facade. OFF unless ALL explicit QA args are
+    // supplied. This is not an alternative news provider or production hook.
+    // The outer harness downloads the source over bounded HTTPS *before* this
+    // process starts; the Qt application itself makes NO provider request.
+    {
+        const QString mode = qEnvironmentVariable("FINCEPT_PUBLIC_MCP_NEWS_QA");
+        const QString rss_path = qEnvironmentVariable("FINCEPT_PUBLIC_MCP_NEWS_RSS_FILE");
+        const QString client_path = qEnvironmentVariable("FINCEPT_PUBLIC_MCP_NEWS_CLIENT_SCRIPT");
+        const QString python_path = qEnvironmentVariable("FINCEPT_PUBLIC_MCP_NEWS_PYTHON");
+        if (!mode.isEmpty() || !rss_path.isEmpty() ||
+            !client_path.isEmpty() || !python_path.isEmpty()) {
+            const QFileInfo rss_info(rss_path), client_info(client_path), python_info(python_path);
+            const bool approved =
+                mode == QLatin1String("SAVED_PUBLIC_RSS_LOCAL_READ_V1") &&
+                QCoreApplication::arguments().contains(QStringLiteral("--selftest-mcp-server")) &&
+                rss_info.isAbsolute() && rss_info.isFile() &&
+                rss_info.size() > 0 && rss_info.size() <= 200000 &&
+                client_info.isAbsolute() && client_info.isFile() &&
+                python_info.isAbsolute() && python_info.isFile() && python_info.isExecutable();
+            rep.check(approved, QStringLiteral("opt-in original news MCP QA arguments are bounded"));
+            if (approved) {
+                QFile rss(rss_path);
+                const bool opened = rss.open(QIODevice::ReadOnly);
+                const QByteArray source_bytes = opened ? rss.readAll() : QByteArray();
+                const auto articles = opened && !source_bytes.isEmpty() && source_bytes.size() <= 200000
+                    ? fincept::services::NewsMcpPublicRssQA::parse(source_bytes)
+                    : QVector<fincept::services::NewsArticle>{};
+                const qint64 now = QDateTime::currentSecsSinceEpoch();
+                int fresh = 0;
+                for (const auto& article : articles) {
+                    if (article.publisher_datetime_field == QLatin1String("pubDate") &&
+                        article.publisher_datetime_ts >= now - 86400 &&
+                        article.publisher_datetime_ts <= now + 300 &&
+                        article.link.startsWith(QLatin1String("https://"))) {
+                        ++fresh;
+                    }
+                }
+                rep.check(articles.size() > 0 && articles.size() <= 100 && fresh > 0,
+                          QStringLiteral("original NewsService parsed recent publisher dates from saved public RSS"),
+                          QStringLiteral("source items=%1, recent=%2").arg(articles.size()).arg(fresh));
+
+                auto& cache = fincept::CacheManager::instance();
+                const QString key = QStringLiteral("news:articles");
+                const bool cache_available = fincept::CacheDatabase::instance().is_open();
+                // Never overwrite existing news if this were accidentally run
+                // under a pre-existing profile. The real CI profile is disposable.
+                const bool cache_empty = cache_available && cache.get(key).isNull();
+                rep.check(cache_available && cache_empty,
+                          QStringLiteral("original news cache is open and contains no pre-existing article"));
+                if (!articles.isEmpty() && fresh > 0 && cache_empty) {
+                    const QString payload = fincept::services::NewsMcpPublicRssQA::encode(articles);
+                    cache.put(key, payload, 90, QStringLiteral("mcp_selftest_public_news"));
+                    const bool seeded = cache.get(key).toString() == payload;
+                    rep.check(seeded, QStringLiteral("original news cache seeded from actual source parser"));
+                    if (seeded) {
+                        const auto get_news = [&]() {
+                            return call_tool(port, token, QStringLiteral("get_news"),
+                                             {{"category", "MARKETS"}, {"time_range", "24H"},
+                                              {"query", ""}, {"limit", 5}, {"force", false},
+                                              {"include_publisher_datetime", true}}, 54)
+                                .value(QStringLiteral("result")).toObject();
+                        };
+                        const QJsonObject result = get_news();
+                        const QJsonObject body = result.value(QStringLiteral("structuredContent")).toObject();
+                        const QJsonArray returned = body.value(QStringLiteral("articles")).toArray();
+                        bool clocks_ok = !result.value(QStringLiteral("isError")).toBool(true) &&
+                            body.value(QStringLiteral("count")).toInt() == returned.size() &&
+                            !returned.isEmpty() && returned.size() <= 5;
+                        for (const auto& item : returned) {
+                            const auto article = item.toObject();
+                            const qint64 claimed = article.value(QStringLiteral("publisher_datetime_unix"))
+                                .toVariant().toLongLong();
+                            clocks_ok &= article.value(QStringLiteral("publisher_datetime_field"))
+                                                .toString() == QLatin1String("pubDate") &&
+                                         article.value(QStringLiteral("publisher_datetime_attested")).toBool(true) == false &&
+                                         claimed >= now - 86400 && claimed <= now + 300;
+                        }
+                        rep.check(clocks_ok,
+                                  QStringLiteral("original get_news MCP returns real-source clock with no attestation"),
+                                  QStringLiteral("returned=%1").arg(returned.size()));
+
+                        // Run the independently developed KAIROS code, not a
+                        // rewritten mock or a second MCP client.
+                        const auto run_kairos_client = [&](const QString& expect, const QByteArray& pass_marker) {
+                            QProcess child;
+                            QProcessEnvironment safe;
+                            safe.insert(QStringLiteral("HOME"), qEnvironmentVariable("HOME"));
+                            safe.insert(QStringLiteral("TMPDIR"), qEnvironmentVariable("TMPDIR"));
+                            safe.insert(QStringLiteral("PATH"), QStringLiteral("/usr/bin:/bin:/usr/local/bin"));
+                            safe.insert(QStringLiteral("PYTHONDONTWRITEBYTECODE"), QStringLiteral("1"));
+                            safe.insert(QStringLiteral("KAIROS_QA_MCP_PORT"), QString::number(port));
+                            safe.insert(QStringLiteral("KAIROS_QA_MCP_TEST_TOKEN"), token);
+                            safe.insert(QStringLiteral("KAIROS_QA_EXPECT"), expect);
+                            child.setProcessEnvironment(safe);
+                            child.setProgram(python_path);
+                            child.setArguments({client_path, QStringLiteral("--client-probe")});
+                            child.start();
+                            const bool completed = pump_until(
+                                [&child]() { return child.state() == QProcess::NotRunning; }, 22000);
+                            if (!completed) {
+                                child.kill();
+                                child.waitForFinished(2000);
+                            }
+                            const QByteArray receipt = child.readAllStandardOutput();
+                            return completed && child.exitStatus() == QProcess::NormalExit &&
+                                child.exitCode() == 0 && receipt.contains(pass_marker);
+                        };
+                        if (clocks_ok) {
+                            rep.check(run_kairos_client(QStringLiteral("RECENT"),
+                                          QByteArrayLiteral("KAIROS_ORIGINAL_FINCEPT_PUBLIC_NEWS_READ_PASS")),
+                                      QStringLiteral("real public RSS -> original Qt get_news -> real KAIROS client PASS"));
+                        }
+
+                        // Same original parser/cache/MCP; old source timestamp
+                        // is intentionally rejected by KAIROS without using
+                        // an invented arrival time or fetching replacement news.
+                        const QByteArray stale_rss =
+                            "<rss version=\"2.0\"><channel><item>"
+                            "<title>Fixture only, old synthetic news</title>"
+                            "<link>https://example.org/qa-stale-news</link>"
+                            "<pubDate>Wed, 04 Jun 2025 10:00:00 GMT</pubDate>"
+                            "</item></channel></rss>";
+                        const auto stale = fincept::services::NewsMcpPublicRssQA::parse(stale_rss);
+                        if (stale.size() == 1 && stale.first().publisher_datetime_ts > 0 &&
+                            stale.first().publisher_datetime_ts < now - 86400) {
+                            cache.put(key, fincept::services::NewsMcpPublicRssQA::encode(stale),
+                                      90, QStringLiteral("mcp_selftest_stale_news"));
+                            const QJsonObject stale_result = get_news();
+                            const QJsonObject stale_body = stale_result
+                                .value(QStringLiteral("structuredContent")).toObject();
+                            rep.check(!stale_result.value(QStringLiteral("isError")).toBool(true) &&
+                                          stale_body.value(QStringLiteral("count")).toInt(-1) == 0,
+                                      QStringLiteral("original get_news filters out stale publisher timestamps"));
+                            rep.check(run_kairos_client(QStringLiteral("STALE"),
+                                         QByteArrayLiteral("KAIROS_ORIGINAL_FINCEPT_STALE_NEWS_HOLD_PASS")),
+                                      QStringLiteral("real KAIROS rejects original stale news as FINCEPT_UNAVAILABLE"));
+                        } else {
+                            rep.check(false, QStringLiteral("synthetic old source timestamp parsed correctly"));
+                        }
+                    }
+                    // Never leave real or synthetic QA news in cache, even if
+                    // KAIROS validation rejected it.
+                    cache.remove(key);
+                }
             }
         }
     }

@@ -244,6 +244,7 @@ class NewsService : public QObject, public fincept::datahub::Producer {
 
   private:
     friend struct NewsSourceDateQA; // Native offline FeedSelfTest only; no new public API.
+    friend struct NewsMcpPublicRssQA; // Headless original MCP selftest; no production access.
     NewsService();
 
     static QVector<RSSFeed> default_feeds();

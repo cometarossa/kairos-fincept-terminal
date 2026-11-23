@@ -66,5 +66,13 @@ class OriginalQuoteErrorF0(unittest.TestCase):
         self.assertIn("publish_error", self.hub)
 
 
+    def test_linux_ci_runs_real_binary_smoke_not_just_source_checks(self):
+        workflow = (ROOT / ".github/workflows/build-linux-qa.yml").read_text(encoding="utf-8")
+        self.assertIn("Run original dashboard DataHub quote/error smoke (Linux)", workflow)
+        self.assertIn('if: runner.os == \'Linux\'', workflow)
+        self.assertIn('ci_app_checks.sh smoke "build/', workflow)
+        self.assertIn("ci-quote-error-smoke 540", workflow)
+
+
 if __name__ == "__main__":
     unittest.main()

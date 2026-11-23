@@ -102,6 +102,10 @@ def env_for(home: Path, port: int) -> dict[str, str]:
         "QT_QPA_PLATFORM": "offscreen",
         "QT_OPENGL": "software",
         "QT_QUICK_BACKEND": "software",
+        # Exact packaged AppImage in rootless --network none Docker has no
+        # FUSE device. Preserve extract-and-run into the ephemeral private HOME
+        # even though tests deliberately do NOT inherit the host environment.
+        "APPIMAGE_EXTRACT_AND_RUN": "1",
         "QTWEBENGINE_DISABLE_SANDBOX": "1",
         "QTWEBENGINE_CHROMIUM_FLAGS": "--disable-gpu --no-sandbox",
         "FINCEPT_READONLY_NEWS_SERVICE_ACK": "FINCEPT_RESEARCH_ONLY_NO_BROKER_V1",

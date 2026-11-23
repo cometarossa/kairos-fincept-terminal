@@ -141,11 +141,35 @@ void MarketQuoteStripWidget::hub_resubscribe() {
             on_quote(v.value<fincept::services::QuoteData>());
         });
     }
+    // Error topics are independent from value topics. Never let one broken
+    // provider or an unrelated symbol blank the other quote rows.
+    hub.subscribe_pattern_errors(this, QStringLiteral("market:quote:*"),
+                                 [this](const QString& topic, const QString& error) {
+        const QString symbol = topic.mid(QStringLiteral("market:quote:").size());
+        auto it = rows_.find(symbol);
+        if (it == rows_.end())
+            return;
+        Row& row = it.value();
+        row.change->setToolTip(tr("Quote refresh failed: %1").arg(error.left(120)));
+        quote_strip_set_dir(row.change, "unknown");
+        if (received_.contains(symbol)) {
+            // The DataHub deliberately retains last-known-good on error.
+            // Do not misrepresent the old percentage as a current change.
+            row.change->setText(tr("Last quote"));
+            return;
+        }
+        row.price->setText(QStringLiteral("—"));
+        row.change->setText(tr("Unavailable"));
+        if (received_.isEmpty())
+            set_error(tr("Quote %1 unavailable: %2").arg(symbol, error.left(120)));
+    });
     hub_active_ = true;
 }
 
 void MarketQuoteStripWidget::hub_unsubscribe_all() {
-    datahub::DataHub::instance().unsubscribe(this);
+    auto& hub = datahub::DataHub::instance();
+    hub.unsubscribe_pattern_errors(this, QStringLiteral("market:quote:*"));
+    hub.unsubscribe(this);
     hub_active_ = false;
 }
 
@@ -166,6 +190,7 @@ void MarketQuoteStripWidget::on_quote(const fincept::services::QuoteData& q) {
     if (it == rows_.end())
         return;
     Row& r = it.value();
+    r.change->setToolTip(QString{});
     r.price->setText(QString::number(q.price, 'f', 2));
     const QString sign = q.change_pct >= 0 ? "+" : "";
     r.change->setText(QString("%1%2%").arg(sign).arg(q.change_pct, 0, 'f', 2));

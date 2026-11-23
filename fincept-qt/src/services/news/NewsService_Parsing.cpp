@@ -122,9 +122,18 @@ QVector<NewsArticle> NewsService::parse_rss_xml(const QByteArray& xml, const RSS
             } else if (current_tag == "pubDate" || current_tag == "published" || current_tag == "updated" ||
                        current_tag == "date") {
                 if (current.sort_ts == 0) {
-                    QDateTime dt = QDateTime::fromString(text, Qt::RFC2822Date);
+                    // Qt 6.8 can reject a valid publisher RFC 2822 literal
+                    // ending in GMT/UTC/UT, even though it parses +0000.
+                    // Normalize ONLY these unambiguous zero-offset zone tokens,
+                    // never a loose ISO substring or an unspecified local zone.
+                    QString strict_source_text = text.trimmed();
+                    static const QRegularExpression utc_zone(
+                        R"(\s+(?:GMT|UTC|UT)$)", QRegularExpression::CaseInsensitiveOption);
+                    if (utc_zone.match(strict_source_text).hasMatch())
+                        strict_source_text.replace(utc_zone, QStringLiteral(" +0000"));
+                    QDateTime dt = QDateTime::fromString(strict_source_text, Qt::RFC2822Date);
                     if (!dt.isValid())
-                        dt = QDateTime::fromString(text, Qt::ISODate);
+                        dt = QDateTime::fromString(strict_source_text, Qt::ISODate);
                     if (!dt.isValid())
                         dt = QDateTime::fromString(text, "ddd, dd MMM yyyy HH:mm:ss");
                     // Only fully parsed RFC/ISO datetime with an explicit

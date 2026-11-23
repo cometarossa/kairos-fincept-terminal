@@ -21,6 +21,8 @@ class PublisherDateContract(unittest.TestCase):
         self.assertEqual(s.count("current.publisher_datetime_ts = current.sort_ts;"), 1)
         self.assertNotIn("current.publisher_datetime_ts = parsed_ts;", s)
         self.assertIn("source_clock_explicit && dt.isValid()", s)
+        self.assertIn('strict_source_text.replace(utc_zone, QStringLiteral(" +0000"))', s)
+        self.assertIn('QDateTime::fromString(strict_source_text, Qt::RFC2822Date)', s)
         self.assertIn("parse_feed_datetime(text, display)", s)
         self.assertIn("current.publisher_datetime_ts = 0;", s)
         self.assertIn("current.publisher_datetime_field.clear();", s)

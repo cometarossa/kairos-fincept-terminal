@@ -72,6 +72,10 @@ class OriginalQuoteErrorF0(unittest.TestCase):
 
     def test_native_smoke_checks_mixed_quote_rows_both_error_orders(self):
         self.assertIn("#include <QGridLayout>", self.smoke)
+        self.assertIn('#include "screens/dashboard/widgets/LoadingOverlay.h"', self.smoke)
+        self.assertIn('mixed.findChild<screens::widgets::LoadingOverlay*>()', self.smoke)
+        self.assertIn('!mixed_overlay->is_active()', self.smoke)
+        self.assertIn('!original_overlay->is_active()', self.smoke)
         smoke = self.smoke.split("bool dashboard_quote_datahub_smoke()", 1)[1]
         smoke = smoke.split("const QString kDashboardId", 1)[0]
         for text in (

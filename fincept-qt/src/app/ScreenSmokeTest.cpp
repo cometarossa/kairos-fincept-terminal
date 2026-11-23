@@ -141,22 +141,25 @@ bool dashboard_quote_datahub_smoke() {
                                    change->text() == QStringLiteral("+1.60%") &&
                                    change->toolTip().isEmpty();
 
-    // The displayed last-good value must survive a hide/show after the
-    // hub's cache TTL expires. A fresh subscription gets NO cached replay.
+    // Prove last-known-value survival after *actual* cache removal.
+    // A push-only topic ignores TTL, so setting TTL=1 would NOT test
+    // cache expiry: it would simply replay the cached value. Retire the
+    // synthetic-only topic while hidden, then restore push-only policy.
+    // This tests the stronger absent-cache case without any producer call.
     widget.hide();
-    datahub::TopicPolicy stale_policy = policy;
-    stale_policy.ttl_ms = 1;
-    hub.set_policy(topic, stale_policy);
-    spin(20);
+    hub.retire_topic(topic);
+    hub.set_policy(topic, policy); // no cached data, still no provider/network
+    const bool cache_absent = !hub.peek_raw(topic).isValid();
     widget.show();
-    hub.publish_error(topic, QStringLiteral("synthetic_after_hide_expired_cache"));
-    QElapsedTimer stale_t;
-    stale_t.start();
-    while (change && change->text() != QStringLiteral("Last quote") && stale_t.elapsed() < 2500)
-        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
-    const bool preserved_after_hide = price && change &&
+    spin(20); // process queued initial-value callbacks before new error
+    hub.publish_error(topic, QStringLiteral("synthetic_after_hide_no_cache"));
+    spin(20);
+    const bool preserved_after_hide = cache_absent && !hub.peek_raw(topic).isValid() &&
+                                      price && change &&
                                       price->text() == QStringLiteral("125.00") &&
-                                      change->text() == QStringLiteral("Last quote");
+                                      change->text() == QStringLiteral("Last quote") &&
+                                      !widget.is_waiting_for_first_data() &&
+                                      !widget.is_showing_error();
     widget.hide();
     hub.unsubscribe(&widget);
 

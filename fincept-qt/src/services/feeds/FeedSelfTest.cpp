@@ -10,6 +10,7 @@
 #include <QString>
 
 #include <cstdio>
+#include <cstdint>
 #include <algorithm>
 
 namespace fincept::services {
@@ -90,7 +91,7 @@ struct NewsSourceDateQA {
         const qint64 now = QDateTime::currentSecsSinceEpoch();
         int parsed_dates = 0;
         int recent_dates = 0;
-        qint64 newest_publisher_time = 0;
+        int64_t newest_publisher_time = 0; // same C++ type as NewsArticle::publisher_datetime_ts
         for (const auto& a : articles) {
             if (a.publisher_datetime_ts <= 0 || a.publisher_datetime_field != "pubDate")
                 continue;

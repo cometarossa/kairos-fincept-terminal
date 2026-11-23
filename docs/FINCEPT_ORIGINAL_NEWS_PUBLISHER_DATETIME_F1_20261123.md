@@ -27,3 +27,7 @@ The original MCP `get_news` now accepts an **optional** `include_publisher_datet
 3. Use the existing single-domain CNBC RSS sample to drive the **original Qt** opt-in offline parser, then verify provenance and later separately a bounded true Qt/MCP → KAIROS read. No new IG session, provider account, broker execution or LIVE path.
 
 **Current status:** source regression candidate. Market news freshness, cross-provider corroboration and scientific/execution authority are **not verified**.
+
+### Linux gcc-12 type mismatch correction
+
+The 2026-11-23 exact-head Linux build 45126586514 failed before tests on a genuine cross-platform typedef mismatch in the new saved-public-RSS QA fixture: std::max(qint64, int64_t) is rejected when Qt qint64 is long long while C++ int64_t is long. The fixture accumulator now uses int64_t, exactly matching NewsArticle::publisher_datetime_ts. The actual news parser and MCP tool are unchanged by this correction. A new exact-head Linux build is required; no previous failure is counted as passed.

@@ -112,9 +112,82 @@ bool dashboard_quote_datahub_smoke() {
         std::fprintf(stderr, "[Smoke] OK: original dashboard DataHub quote widget painted synthetic value\n");
         std::fflush(stderr);
     }
+    // An unrelated quote error must never affect this widget. The real
+    // DataHub error registry, not a mocked callback, delivers these events.
+    hub.publish_error(QStringLiteral("market:quote:FINCEPT_QA_UNRELATED"), QStringLiteral("synthetic_other"));
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const bool isolated = change && change->text() == QStringLiteral("+1.25%");
+
+    hub.publish_error(topic, QStringLiteral("synthetic_qa_provider_unavailable"));
+    QElapsedTimer err_t;
+    err_t.start();
+    while (change && change->text() != QStringLiteral("Last quote") && err_t.elapsed() < 2500)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const bool old_quote_marked = price && change &&
+                                  price->text() == QStringLiteral("123.45") &&
+                                  change->text() == QStringLiteral("Last quote") &&
+                                  change->toolTip().contains(QStringLiteral("synthetic_qa_provider_unavailable"));
+
+    const services::QuoteData recovered{symbol, symbol, 125.0, 2.0, 1.60,
+                                        126.0, 122.0, 0.0,
+                                        services::QuoteDeliveryOrigin::Unknown, QString{}};
+    hub.publish(topic, QVariant::fromValue(recovered));
+    QElapsedTimer recovery_t;
+    recovery_t.start();
+    while (change && change->text() != QStringLiteral("+1.60%") && recovery_t.elapsed() < 2500)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const bool recovered_cleanly = price && change &&
+                                   price->text() == QStringLiteral("125.00") &&
+                                   change->text() == QStringLiteral("+1.60%") &&
+                                   change->toolTip().isEmpty();
+
     widget.hide();
     hub.unsubscribe(&widget);
-    return valid;
+
+    // A second genuine widget with no price at all must show a provider
+    // error instead of indefinitely showing loading. A later valid quote
+    // must clear that error and restore the original price rendering path.
+    const QString missing_symbol = QStringLiteral("FINCEPT_QA_MISSING_ONLY");
+    const QString missing_topic = QStringLiteral("market:quote:") + missing_symbol;
+    hub.set_policy(missing_topic, policy); // push-only: no broker or public provider
+    QJsonArray missing_symbols;
+    missing_symbols.append(missing_symbol);
+    QJsonObject missing_cfg;
+    missing_cfg.insert(QStringLiteral("symbols"), missing_symbols);
+    screens::widgets::MarketQuoteStripWidget missing(missing_cfg);
+    missing.show();
+    hub.publish_error(missing_topic, QStringLiteral("synthetic_no_quote"));
+    QElapsedTimer missing_t;
+    missing_t.start();
+    while (!missing.is_showing_error() && missing_t.elapsed() < 2500)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const bool empty_error = missing.is_showing_error();
+    const services::QuoteData first_quote{missing_symbol, missing_symbol, 99.0, 1.0, 1.0,
+                                          100.0, 98.0, 0.0,
+                                          services::QuoteDeliveryOrigin::Unknown, QString{}};
+    hub.publish(missing_topic, QVariant::fromValue(first_quote));
+    QLabel* missing_price = missing.findChild<QLabel*>(QStringLiteral("quoteStripPrice"));
+    QElapsedTimer clear_t;
+    clear_t.start();
+    while ((missing.is_showing_error() ||
+            !missing_price || missing_price->text() != QStringLiteral("99.00")) &&
+           clear_t.elapsed() < 2500)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const bool error_cleared = !missing.is_showing_error() &&
+                               missing_price && missing_price->text() == QStringLiteral("99.00");
+    missing.hide();
+    hub.unsubscribe(&missing);
+
+    const bool all_ok = valid && isolated && old_quote_marked &&
+                        recovered_cleanly && empty_error && error_cleared;
+    if (!all_ok) {
+        std::fprintf(stderr,
+                     "[Smoke] FAIL: DataHub quote error isolation / last-known / recovery: %d %d %d %d %d %d\\n",
+                     int(valid), int(isolated), int(old_quote_marked),
+                     int(recovered_cleanly), int(empty_error), int(error_cleared));
+        std::fflush(stderr);
+    }
+    return all_ok;
 }
 
 const QString kDashboardId = QStringLiteral("dashboard");

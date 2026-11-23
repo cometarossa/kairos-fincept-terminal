@@ -141,6 +141,22 @@ bool dashboard_quote_datahub_smoke() {
                                    change->text() == QStringLiteral("+1.60%") &&
                                    change->toolTip().isEmpty();
 
+    // The displayed last-good value must survive a hide/show after the
+    // hub's cache TTL expires. A fresh subscription gets NO cached replay.
+    widget.hide();
+    datahub::TopicPolicy stale_policy = policy;
+    stale_policy.ttl_ms = 1;
+    hub.set_policy(topic, stale_policy);
+    spin(20);
+    widget.show();
+    hub.publish_error(topic, QStringLiteral("synthetic_after_hide_expired_cache"));
+    QElapsedTimer stale_t;
+    stale_t.start();
+    while (change && change->text() != QStringLiteral("Last quote") && stale_t.elapsed() < 2500)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const bool preserved_after_hide = price && change &&
+                                      price->text() == QStringLiteral("125.00") &&
+                                      change->text() == QStringLiteral("Last quote");
     widget.hide();
     hub.unsubscribe(&widget);
 
@@ -179,7 +195,8 @@ bool dashboard_quote_datahub_smoke() {
     hub.unsubscribe(&missing);
 
     const bool all_ok = valid && isolated && old_quote_marked &&
-                        recovered_cleanly && empty_error && error_cleared;
+                        recovered_cleanly && preserved_after_hide &&
+                        empty_error && error_cleared;
     if (!all_ok) {
         std::fprintf(stderr,
                      "[Smoke] FAIL: DataHub quote error isolation / last-known / recovery: %d %d %d %d %d %d\\n",

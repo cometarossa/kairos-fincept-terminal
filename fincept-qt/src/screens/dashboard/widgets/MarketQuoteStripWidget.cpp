@@ -158,6 +158,9 @@ void MarketQuoteStripWidget::hub_resubscribe() {
             // The widget also retains its rendered quote when hidden, even
             // after the hub's cache TTL expires. Do not erase that price.
             row.change->setText(tr("Last quote"));
+            // A fresh subscription has no current ticks: don't obscure a
+            // retained real price with the empty-loading watchdog/overlay.
+            set_loading(false);
             return;
         }
         row.price->setText(QStringLiteral("—"));

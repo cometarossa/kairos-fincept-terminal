@@ -199,9 +199,10 @@ bool dashboard_quote_datahub_smoke() {
                         empty_error && error_cleared;
     if (!all_ok) {
         std::fprintf(stderr,
-                     "[Smoke] FAIL: DataHub quote error isolation / last-known / recovery: %d %d %d %d %d %d\\n",
+                     "[Smoke] FAIL: DataHub quote isolation / last quote / expired cache / recovery: %d %d %d %d %d %d %d\n",
                      int(valid), int(isolated), int(old_quote_marked),
-                     int(recovered_cleanly), int(empty_error), int(error_cleared));
+                     int(recovered_cleanly), int(preserved_after_hide),
+                     int(empty_error), int(error_cleared));
         std::fflush(stderr);
     }
     return all_ok;

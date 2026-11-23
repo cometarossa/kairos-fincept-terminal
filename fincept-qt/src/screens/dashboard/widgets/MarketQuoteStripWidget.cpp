@@ -133,7 +133,12 @@ void MarketQuoteStripWidget::hub_resubscribe() {
     // Drop the cross-config received set so a re-subscribe after a config
     // change shows the loading overlay until each new symbol publishes once.
     received_.clear();
-    set_loading_progress(received_.size(), symbols_.size());
+    // A retained real quote is still useful while other symbols refresh.
+    // An all-tile loading overlay would conceal it, even with no new ticks.
+    if (has_quote_.isEmpty())
+        set_loading_progress(received_.size(), symbols_.size());
+    else
+        set_loading(false);
     for (const auto& sym : symbols_) {
         const QString topic = QStringLiteral("market:quote:") + sym;
         hub.subscribe(this, topic, [this](const QVariant& v) {
@@ -165,8 +170,14 @@ void MarketQuoteStripWidget::hub_resubscribe() {
         }
         row.price->setText(QStringLiteral("—"));
         row.change->setText(tr("Unavailable"));
-        if (received_.isEmpty())
+        if (has_quote_.isEmpty()) {
+            // No row has ever shown a genuine quote: explain why the whole
+            // strip is blank. Otherwise keep the valid rows on screen and
+            // label only this never-populated row as unavailable.
             set_error(tr("Quote %1 unavailable: %2").arg(symbol, error.left(120)));
+        } else {
+            set_loading(false);
+        }
     });
     hub_active_ = true;
 }
@@ -202,7 +213,12 @@ void MarketQuoteStripWidget::on_quote(const fincept::services::QuoteData& q) {
     quote_strip_set_dir(r.change, q.change_pct >= 0 ? "up" : "down");
     has_quote_.insert(q.symbol);
     received_.insert(q.symbol);
-    set_loading_progress(received_.size(), symbols_.size());
+    if (has_quote_.size() == symbols_.size())
+        set_loading_progress(received_.size(), symbols_.size());
+    else
+        // Partial DataHub success must not hide real quotes behind a
+        // full-widget progress overlay while other rows remain pending.
+        set_loading(false);
 }
 
 QDialog* MarketQuoteStripWidget::make_config_dialog(QWidget* parent) {

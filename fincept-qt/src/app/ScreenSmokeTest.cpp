@@ -4,10 +4,18 @@
 #include "auth/InactivityGuard.h"
 #include "core/logging/Logger.h"
 #include "screens/dashboard/canvas/DashboardCanvas.h"
+#include "datahub/DataHub.h"
+#include "datahub/DataHubMetaTypes.h"
+#include "datahub/TopicPolicy.h"
+#include "screens/dashboard/widgets/MarketQuoteStripWidget.h"
+#include "services/markets/MarketDataService.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QLabel>
 #include <QString>
 #include <QStringList>
 
@@ -50,6 +58,63 @@ int wait_for_construction(DockScreenRouter* router, const QString& id) {
     while (!router->screen_widget(id) && t.elapsed() < kConstructDeadlineMs)
         QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
     return static_cast<int>(t.elapsed());
+}
+
+// Tests the original DataHub->dashboard widget delivery path with an unmistakably
+// synthetic QA symbol. The topic is push-only BEFORE publish/subscribe: the test
+// must never trigger Yahoo, IG, broker, or any other provider network request.
+// Only --smoke-test invokes this, after the normal auth/PIN refusal gate.
+bool dashboard_quote_datahub_smoke() {
+    constexpr const char* kQaSymbol = "FINCEPT_QA_SYNTHETIC_ONLY";
+    const QString symbol = QString::fromLatin1(kQaSymbol);
+    const QString topic = QStringLiteral("market:quote:") + symbol;
+    auto& hub = datahub::DataHub::instance();
+    datahub::TopicPolicy policy;
+    policy.push_only = true;
+    policy.ttl_ms = 60'000;
+    hub.set_policy(topic, policy);
+
+    // A synthetic source is NOT financial evidence. It only verifies that the
+    // production widget consumes the production DataHub topic and paints its
+    // price and change labels, rather than sitting on the loading overlay.
+    const services::QuoteData quote{symbol, symbol, 123.45, 1.50, 1.25,
+                                    124.0, 122.0, 0.0,
+                                    services::QuoteDeliveryOrigin::Unknown, QString{}};
+    hub.publish(topic, QVariant::fromValue(quote));
+
+    QJsonArray symbols;
+    symbols.append(symbol);
+    QJsonObject cfg;
+    cfg.insert(QStringLiteral("symbols"), symbols);
+    screens::widgets::MarketQuoteStripWidget widget(cfg);
+    widget.show();
+
+    QLabel* price = widget.findChild<QLabel*>(QStringLiteral("quoteStripPrice"));
+    QLabel* change = widget.findChild<QLabel*>(QStringLiteral("quoteStripChange"));
+    const auto rendered = [price, change]() {
+        return price && change &&
+               price->text() == QStringLiteral("123.45") &&
+               change->text() == QStringLiteral("+1.25%");
+    };
+    // DataHub delivers cached values through a queued Qt callback. Poll until
+    // painted rather than relying on a fixed delay on loaded CI machines.
+    QElapsedTimer t;
+    t.start();
+    while (!rendered() && t.elapsed() < 2500)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const bool valid = rendered();
+    if (!valid) {
+        std::fprintf(stderr,
+                     "[Smoke] FAIL: original Quote Strip did not paint the synthetic DataHub price/change\n");
+        std::fflush(stderr);
+        LOG_ERROR("Smoke", "original dashboard Quote Strip did not consume synthetic DataHub value");
+    } else {
+        std::fprintf(stderr, "[Smoke] OK: original dashboard DataHub quote widget painted synthetic value\n");
+        std::fflush(stderr);
+    }
+    widget.hide();
+    hub.unsubscribe(&widget);
+    return valid;
 }
 
 const QString kDashboardId = QStringLiteral("dashboard");
@@ -147,6 +212,10 @@ int run_screen_smoke_test(DockScreenRouter* router) {
             std::fflush(stderr);
             LOG_WARN("Smoke", QString("%1 took %2 ms to construct").arg(id).arg(waited_ms));
         }
+    }
+
+    if (failures.isEmpty() && !dashboard_quote_datahub_smoke()) {
+        failures << QStringLiteral("dashboard_datahub_quote_widget");
     }
 
     if (failures.isEmpty()) {

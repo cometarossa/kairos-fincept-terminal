@@ -213,11 +213,12 @@ void MarketQuoteStripWidget::on_quote(const fincept::services::QuoteData& q) {
     quote_strip_set_dir(r.change, q.change_pct >= 0 ? "up" : "down");
     has_quote_.insert(q.symbol);
     received_.insert(q.symbol);
-    if (has_quote_.size() == symbols_.size())
+    // A fresh quote for just one symbol must never re-arm a full-widget
+    // overlay over previously painted rows. Complete bursts still update
+    // the determinate progress bookkeeping.
+    if (received_.size() == symbols_.size())
         set_loading_progress(received_.size(), symbols_.size());
     else
-        // Partial DataHub success must not hide real quotes behind a
-        // full-widget progress overlay while other rows remain pending.
         set_loading(false);
 }
 

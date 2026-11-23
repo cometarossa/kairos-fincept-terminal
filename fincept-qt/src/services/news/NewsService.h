@@ -55,6 +55,10 @@ struct NewsArticle {
     QStringList tickers;
     QString link;
     int64_t sort_ts = 0; // unix seconds
+    // Publisher-supplied RSS/Atom datetime, NEVER synthesized from local arrival.
+    // A source "updated" field is not proof of original publication time.
+    int64_t publisher_datetime_ts = 0;
+    QString publisher_datetime_field; // pubDate | published | updated | date, or empty
     int tier = 4;        // 1=wire, 2=major, 3=specialty, 4=blog
     ThreatClassification threat;
     SourceFlag source_flag = SourceFlag::NONE;
@@ -239,6 +243,7 @@ class NewsService : public QObject, public fincept::datahub::Producer {
     void live_state_changed(bool connected);
 
   private:
+    friend struct NewsSourceDateQA; // Native offline FeedSelfTest only; no new public API.
     NewsService();
 
     static QVector<RSSFeed> default_feeds();

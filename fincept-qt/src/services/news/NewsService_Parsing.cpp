@@ -122,22 +122,44 @@ QVector<NewsArticle> NewsService::parse_rss_xml(const QByteArray& xml, const RSS
             } else if (current_tag == "pubDate" || current_tag == "published" || current_tag == "updated" ||
                        current_tag == "date") {
                 if (current.sort_ts == 0) {
-                    QDateTime dt = QDateTime::fromString(text, Qt::RFC2822Date);
+                    // Qt 6.8 can reject a valid publisher RFC 2822 literal
+                    // ending in GMT/UTC/UT, even though it parses +0000.
+                    // Normalize ONLY these unambiguous zero-offset zone tokens,
+                    // never a loose ISO substring or an unspecified local zone.
+                    QString strict_source_text = text.trimmed();
+                    static const QRegularExpression utc_zone(
+                        R"(\s+(?:GMT|UTC|UT)$)", QRegularExpression::CaseInsensitiveOption);
+                    if (utc_zone.match(strict_source_text).hasMatch())
+                        strict_source_text.replace(utc_zone, QStringLiteral(" +0000"));
+                    QDateTime dt = QDateTime::fromString(strict_source_text, Qt::RFC2822Date);
                     if (!dt.isValid())
-                        dt = QDateTime::fromString(text, Qt::ISODate);
+                        dt = QDateTime::fromString(strict_source_text, Qt::ISODate);
                     if (!dt.isValid())
                         dt = QDateTime::fromString(text, "ddd, dd MMM yyyy HH:mm:ss");
-                    if (dt.isValid()) {
+                    // Only fully parsed RFC/ISO datetime with an explicit
+                    // UTC/offset suffix is publisher DATE evidence. The generic
+                    // parse_feed_datetime() parser is intentionally lenient:
+                    // its final ISO-substring recovery invents local midnight.
+                    // It may help sort the original GUI but MUST NOT be
+                    // promoted to a publisher-supplied publication instant.
+                    static const QRegularExpression explicit_tz(
+                        R"((?:Z|GMT|UTC|UT|[+-]\d{2}:?\d{2})$)",
+                        QRegularExpression::CaseInsensitiveOption);
+                    const bool source_clock_explicit = explicit_tz.match(text.trimmed()).hasMatch();
+                    if (source_clock_explicit && dt.isValid() && dt.toSecsSinceEpoch() > 0 &&
+                        dt.toSecsSinceEpoch() <= QDateTime::currentSecsSinceEpoch() + kNewsMaxFutureSkewSec) {
                         current.sort_ts = dt.toSecsSinceEpoch();
+                        current.publisher_datetime_ts = current.sort_ts;
+                        current.publisher_datetime_field = current_tag;
                         current.time = dt.toLocalTime().toString("MMM dd, HH:mm");
                     } else {
-                        // Named zones (IST, PDT...), epoch values, "05-Jun-2026 ..." —
-                        // the shared feed parser covers what Qt's stock formats don't.
-                        // An undated item otherwise falls back to "now" below and
-                        // pins an old story to the top of the list.
+                        // Legacy display sorting may use named zones, date-only
+                        // strings or heuristic recovery. All remain UNKNOWN
+                        // for opt-in publisher-clock provenance.
                         QString display;
                         const qint64 parsed_ts = fincept::feeds::parse_feed_datetime(text, display);
-                        if (parsed_ts > 0) {
+                        if (parsed_ts > 0 &&
+                            parsed_ts <= QDateTime::currentSecsSinceEpoch() + kNewsMaxFutureSkewSec) {
                             current.sort_ts = parsed_ts;
                             current.time = QDateTime::fromSecsSinceEpoch(parsed_ts).toString("MMM dd, HH:mm");
                         } else {
@@ -159,6 +181,9 @@ QVector<NewsArticle> NewsService::parse_rss_xml(const QByteArray& xml, const RSS
                 if (current.sort_ts == 0 || current.sort_ts > now_ts + kNewsMaxFutureSkewSec) {
                     current.sort_ts = now_ts;
                     current.time = QDateTime::fromSecsSinceEpoch(now_ts).toString("MMM dd, HH:mm");
+                    // Never re-label the local fallback as a publisher date.
+                    current.publisher_datetime_ts = 0;
+                    current.publisher_datetime_field.clear();
                 }
 
                 // Untrusted link: keep web URLs only (see is_web_url()).

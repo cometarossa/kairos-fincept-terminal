@@ -65,6 +65,8 @@ QString NewsService::serialize_articles(const QVector<NewsArticle>& articles) {
         o["category"] = a.category;
         o["link"] = a.link;
         o["sort_ts"] = static_cast<qint64>(a.sort_ts);
+        o["publisher_datetime_ts"] = static_cast<qint64>(a.publisher_datetime_ts);
+        o["publisher_datetime_field"] = a.publisher_datetime_field;
         o["tier"] = a.tier;
         o["priority"] = priority_string(a.priority);
         o["sentiment"] = sentiment_string(a.sentiment);
@@ -95,6 +97,14 @@ QVector<NewsArticle> NewsService::deserialize_articles(const QString& json) {
         a.category = o["category"].toString();
         a.link = o["link"].toString();
         a.sort_ts = o["sort_ts"].toVariant().toLongLong();
+        const qint64 source_ts = o["publisher_datetime_ts"].toVariant().toLongLong();
+        const QString source_field = o["publisher_datetime_field"].toString();
+        if (source_ts > 0 && source_ts <= QDateTime::currentSecsSinceEpoch() + 300 &&
+            (source_field == "pubDate" || source_field == "published" ||
+             source_field == "updated" || source_field == "date")) {
+            a.publisher_datetime_ts = source_ts;
+            a.publisher_datetime_field = source_field;
+        } // Legacy cache without these fields intentionally remains "unknown".
         a.tier = o["tier"].toInt(4);
         a.priority = priority_from_string(o["priority"].toString());
         a.sentiment = sentiment_from_string(o["sentiment"].toString());

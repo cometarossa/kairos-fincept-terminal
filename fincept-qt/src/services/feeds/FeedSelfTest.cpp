@@ -3,11 +3,113 @@
 #include "services/feeds/FeedParseUtil.h"
 #include "services/feeds/FeedScraper.h"
 #include "services/feeds/FeedTypes.h"
+#include "services/news/NewsService.h"
 
 #include <QDateTime>
+#include <QFile>
 #include <QString>
 
 #include <cstdio>
+#include <cstdint>
+#include <algorithm>
+
+namespace fincept::services {
+
+// Friend-only offline regression of the actual original NewsService RSS
+// parser and cache; cannot start a provider, GUI, MCP or network request.
+struct NewsSourceDateQA {
+    static bool run() {
+        RSSFeed feed{"qa-publisher", "QA", "https://example.invalid/rss",
+                     "MARKETS", "GLOBAL", "TEST", 2};
+        const QByteArray rss =
+            "<rss><channel>"
+            "<item><title>Known publisher date</title><link>https://example.invalid/a</link>"
+            "<pubDate>Wed, 04 Jun 2025 10:00:00 GMT</pubDate></item>"
+            "<item><title>Missing publisher date</title><link>https://example.invalid/b</link></item>"
+            "<item><title>Invalid publisher date</title><link>https://example.invalid/c</link>"
+            "<pubDate>not-a-real-date</pubDate></item>"
+            "<item><title>Future publisher date</title><link>https://example.invalid/d</link>"
+            "<pubDate>Wed, 04 Jun 2099 10:00:00 GMT</pubDate></item>"
+            "<item><title>Updated is not published</title><link>https://example.invalid/e</link>"
+            "<updated>2025-06-04T10:00:00Z</updated></item>"
+            "<item><title>Malformed ISO date contains a valid substring</title>"
+            "<link>https://example.invalid/f</link>"
+            "<pubDate>2025-06-04Tnot-a-time</pubDate></item>"
+            "<item><title>Date only has no UTC clock</title>"
+            "<link>https://example.invalid/g</link>"
+            "<pubDate>2025-06-04</pubDate></item>"
+            "</channel></rss>";
+        const auto a = NewsService::parse_rss_xml(rss, feed);
+        const qint64 expected = QDateTime::fromString(
+            "2025-06-04T10:00:00Z", Qt::ISODate).toSecsSinceEpoch();
+        if (a.size() != 7 || a[0].publisher_datetime_ts != expected ||
+            a[0].publisher_datetime_field != "pubDate" ||
+            a[1].publisher_datetime_ts != 0 || !a[1].publisher_datetime_field.isEmpty() ||
+            a[2].publisher_datetime_ts != 0 || !a[2].publisher_datetime_field.isEmpty() ||
+            a[3].publisher_datetime_ts != 0 || !a[3].publisher_datetime_field.isEmpty() ||
+            a[4].publisher_datetime_ts != expected ||
+            a[4].publisher_datetime_field != "updated" ||
+            a[5].publisher_datetime_ts != 0 || !a[5].publisher_datetime_field.isEmpty() ||
+            a[6].publisher_datetime_ts != 0 || !a[6].publisher_datetime_field.isEmpty()) {
+            return false;
+        }
+        // Only sorting falls back to now; it MUST NOT promote the guessed
+        // arrival clock to source-claimed publication clock.
+        if (a[1].sort_ts <= 0 || a[2].sort_ts <= 0 || a[3].sort_ts <= 0)
+            return false;
+        const auto restored = NewsService::deserialize_articles(NewsService::serialize_articles(a));
+        if (restored.size() != 7 || restored[0].publisher_datetime_ts != expected ||
+            restored[0].publisher_datetime_field != "pubDate" ||
+            restored[1].publisher_datetime_ts != 0 ||
+            restored[4].publisher_datetime_field != "updated" ||
+            restored[5].publisher_datetime_ts != 0 ||
+            restored[6].publisher_datetime_ts != 0) {
+            return false;
+        }
+        // Legacy persisted articles cannot acquire a publisher clock from
+        // their synthetic sort_ts when the new fields are absent.
+        const QString legacy = R"([{"headline":"Old story","sort_ts":1795000000}])";
+        const auto old = NewsService::deserialize_articles(legacy);
+        return old.size() == 1 && old[0].publisher_datetime_ts == 0 &&
+               old[0].publisher_datetime_field.isEmpty();
+    }
+
+    // Explicit offline QA only: consume an operator-captured public RSS XML
+    // file as input to the ORIGINAL parser; no app-side HTTP, credentials or
+    // generic KAIROS tool invocation. Prints counts/timestamps, not headlines.
+    static bool run_public_rss_file() {
+        const QString path = qEnvironmentVariable("FINCEPT_QA_PUBLIC_RSS_FILE");
+        if (path.isEmpty())
+            return true; // zero side effects in normal --selftest-feeds
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly) || file.size() <= 0 || file.size() > 200000)
+            return false;
+        const QByteArray xml = file.readAll();
+        RSSFeed feed{"qa-public-news", "Public QA", "https://search.cnbc.com/",
+                     "MARKETS", "GLOBAL", "CNBC", 2};
+        const auto articles = NewsService::parse_rss_xml(xml, feed);
+        const qint64 now = QDateTime::currentSecsSinceEpoch();
+        int parsed_dates = 0;
+        int recent_dates = 0;
+        int64_t newest_publisher_time = 0; // same C++ type as NewsArticle::publisher_datetime_ts
+        for (const auto& a : articles) {
+            if (a.publisher_datetime_ts <= 0 || a.publisher_datetime_field != "pubDate")
+                continue;
+            ++parsed_dates;
+            newest_publisher_time = std::max(newest_publisher_time, a.publisher_datetime_ts);
+            if (a.publisher_datetime_ts >= now - 24 * 3600 &&
+                a.publisher_datetime_ts <= now + 300 && a.link.startsWith("https://"))
+                ++recent_dates;
+        }
+        std::printf("[NewsDateQA] external_rss_items=%d parsed_publisher_dates=%d "
+                    "recent_24h_https=%d latest_publisher_epoch=%lld\n",
+                    static_cast<int>(articles.size()), parsed_dates, recent_dates,
+                    static_cast<long long>(newest_publisher_time));
+        return !articles.isEmpty() && parsed_dates > 0 && recent_dates > 0;
+    }
+};
+
+} // namespace fincept::services
 
 namespace fincept::feeds {
 
@@ -166,6 +268,14 @@ int run_feed_selftest() {
         check("date dd-MMM-yyyy HH:mm:ss", parse_feed_datetime("05-Jun-2026 14:35:36", disp) != 0);
         check("date dd/MMM/yyyy", parse_feed_datetime("05/Jun/2026", disp) != 0);
         check("date garbage -> 0", parse_feed_datetime("not a date", disp) == 0);
+    }
+
+    check("news: RSS publisher date never replaced by arrival / survives cache",
+          fincept::services::NewsSourceDateQA::run());
+
+    if (!qEnvironmentVariableIsEmpty("FINCEPT_QA_PUBLIC_RSS_FILE")) {
+        check("news: saved real public RSS parsed and dated by ORIGINAL NewsService",
+              fincept::services::NewsSourceDateQA::run_public_rss_file());
     }
 
     std::printf("\nfeed selftest: %s (%d failures)\n", failures == 0 ? "OK" : "FAILED", failures);

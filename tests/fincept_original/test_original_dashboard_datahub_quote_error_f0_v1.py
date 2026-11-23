@@ -44,6 +44,7 @@ class OriginalQuoteErrorF0(unittest.TestCase):
         self.assertIn("r.change->setToolTip(QString{});", quote)
         self.assertIn("set_loading_progress(received_.size(), symbols_.size());", quote)
         self.assertIn('row.change->setText(tr("Last quote"));', self.strip)
+        self.assertIn("set_loading(false);", self.strip)
         self.assertIn('row.change->setText(tr("Unavailable"));', self.strip)
 
     def test_native_smoke_exercises_error_and_recovery_without_provider(self):
@@ -86,7 +87,9 @@ class OriginalQuoteErrorF0(unittest.TestCase):
         self.assertNotIn("has_quote_.clear();", resub)
         smoke = self.smoke.split("bool dashboard_quote_datahub_smoke()", 1)[1]
         smoke = smoke.split("const QString kDashboardId", 1)[0]
-        self.assertIn("stale_policy.ttl_ms = 1;", smoke)
+        self.assertIn("hub.retire_topic(topic);", smoke)
+        self.assertIn("const bool cache_absent = !hub.peek_raw(topic).isValid();", smoke)
+        self.assertIn("!widget.is_waiting_for_first_data()", smoke)
         self.assertIn("spin(20);", smoke)
         self.assertIn("preserved_after_hide", smoke)
         self.assertIn("recovered_cleanly && preserved_after_hide", smoke)

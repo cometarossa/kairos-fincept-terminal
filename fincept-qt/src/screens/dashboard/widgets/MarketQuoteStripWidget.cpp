@@ -91,6 +91,7 @@ void MarketQuoteStripWidget::build_rows() {
         delete it;
     }
     rows_.clear();
+    has_quote_.clear(); // Only a real row rebuild invalidates the last quote.
 
     // One host carries the stylesheet for every row label (objectName + "dir"
     // property selectors) — see apply_styles().
@@ -152,9 +153,10 @@ void MarketQuoteStripWidget::hub_resubscribe() {
         Row& row = it.value();
         row.change->setToolTip(tr("Quote refresh failed: %1").arg(error.left(120)));
         quote_strip_set_dir(row.change, "unknown");
-        if (received_.contains(symbol)) {
+        if (has_quote_.contains(symbol)) {
             // The DataHub deliberately retains last-known-good on error.
-            // Do not misrepresent the old percentage as a current change.
+            // The widget also retains its rendered quote when hidden, even
+            // after the hub's cache TTL expires. Do not erase that price.
             row.change->setText(tr("Last quote"));
             return;
         }
@@ -195,6 +197,7 @@ void MarketQuoteStripWidget::on_quote(const fincept::services::QuoteData& q) {
     const QString sign = q.change_pct >= 0 ? "+" : "";
     r.change->setText(QString("%1%2%").arg(sign).arg(q.change_pct, 0, 'f', 2));
     quote_strip_set_dir(r.change, q.change_pct >= 0 ? "up" : "down");
+    has_quote_.insert(q.symbol);
     received_.insert(q.symbol);
     set_loading_progress(received_.size(), symbols_.size());
 }

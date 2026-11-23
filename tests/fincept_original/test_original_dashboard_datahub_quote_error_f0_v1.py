@@ -34,7 +34,8 @@ class OriginalQuoteErrorF0(unittest.TestCase):
         self.assertIn("if (it == rows_.end())", region)
         self.assertIn("return;", region)
         self.assertIn('set_error(tr("Quote %1 unavailable: %2")', region)
-        self.assertIn("if (received_.isEmpty())", region)
+        self.assertIn("if (has_quote_.isEmpty())", region)
+        self.assertIn("set_loading(false);", region)
 
     def test_explicit_error_lifecycle_and_valid_quote_recovery(self):
         self.assertIn('hub.unsubscribe_pattern_errors(this, QStringLiteral("market:quote:*"));', self.strip)
@@ -43,6 +44,8 @@ class OriginalQuoteErrorF0(unittest.TestCase):
         quote = quote.split("QDialog* MarketQuoteStripWidget::make_config_dialog(", 1)[0]
         self.assertIn("r.change->setToolTip(QString{});", quote)
         self.assertIn("set_loading_progress(received_.size(), symbols_.size());", quote)
+        self.assertIn("if (received_.size() == symbols_.size())", quote)
+        self.assertIn("set_loading(false);", quote)
         self.assertIn('row.change->setText(tr("Last quote"));', self.strip)
         self.assertIn("set_loading(false);", self.strip)
         self.assertIn('row.change->setText(tr("Unavailable"));', self.strip)
@@ -66,6 +69,25 @@ class OriginalQuoteErrorF0(unittest.TestCase):
         self.assertNotIn("python::PythonWorker", smoke)
         self.assertIn("publish_error", self.hub)
 
+
+    def test_native_smoke_checks_mixed_quote_rows_both_error_orders(self):
+        self.assertIn("#include <QGridLayout>", self.smoke)
+        smoke = self.smoke.split("bool dashboard_quote_datahub_smoke()", 1)[1]
+        smoke = smoke.split("const QString kDashboardId", 1)[0]
+        for text in (
+            'FINCEPT_QA_MIX_LAST_GOOD',
+            'FINCEPT_QA_MIX_EMPTY',
+            'hub.retire_topic(mixed_good_topic);',
+            'hub.set_policy(mixed_empty_topic, policy);',
+            'hub.publish_error(mixed_empty_topic, QStringLiteral("synthetic_batch_empty_first"));',
+            'hub.publish_error(mixed_good_topic, QStringLiteral("synthetic_batch_good_second"));',
+            'hub.publish_error(mixed_good_topic, QStringLiteral("synthetic_batch_good_first"));',
+            'hub.publish_error(mixed_empty_topic, QStringLiteral("synthetic_batch_empty_second"));',
+            'mixed_empty_first && mixed_good_first && mixed_partial_recovery',
+            '!mixed.is_showing_error() && !mixed.is_waiting_for_first_data()',
+        ):
+            with self.subTest(text=text):
+                self.assertIn(text, smoke)
 
     def test_linux_ci_runs_real_binary_smoke_not_just_source_checks(self):
         workflow = (ROOT / ".github/workflows/build-linux-qa.yml").read_text(encoding="utf-8")

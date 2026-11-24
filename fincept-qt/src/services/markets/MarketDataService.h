@@ -127,6 +127,7 @@ class MarketDataService : public QObject, public fincept::datahub::Producer {
     // Dedicated original headless service only. Once enabled, history never
     // falls back to Python or a provider. A missing/invalid inbox fails closed.
     bool configure_readonly_history_inbox(const QString& directory);
+    static bool readonly_history_symbol_allowed(const QString& symbol, bool multi_asset);
 
     /// Fetch 5-day hourly sparkline data for multiple symbols in one Python call.
     /// Callback: map of symbol -> list of close prices (chronological).
@@ -176,6 +177,7 @@ class MarketDataService : public QObject, public fincept::datahub::Producer {
     };
     std::optional<HistorySelftestFixture> history_selftest_fixture_;
     QString readonly_history_inbox_;
+    bool readonly_history_multi_asset_ = false;
 
     MarketDataService();
     void flush_batch();

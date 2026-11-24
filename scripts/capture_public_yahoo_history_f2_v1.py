@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Single opt-in SPY 5d/1d capture via the original Fincept Yahoo adapter.
+"""Single opt-in allowlisted 5d/1d capture via the original Fincept Yahoo adapter.
 
 Research only. Local receipt clock is NOT exchange time. Adjusted OHLC,
 provider volume; no quote, completed-session, scientific or execution claim.
@@ -23,10 +23,14 @@ import time
 from capture_public_cnbc_rss_f2_v1 import private_directory, publish
 
 ACK = "SPY_YAHOO_HISTORY_SNAPSHOT_V1"
+MULTI_ACK = "MULTI_YAHOO_HISTORY_SNAPSHOT_V1"
+ALLOWED_SYMBOLS = frozenset(["SPY","EURUSD=X","GBPUSD=X","JPY=X","AUDUSD=X","CAD=X","^GSPC","^NDX","^GDAXI","AAPL","BTC-USD","GC=F"])
 FIELDS = {"timestamp", "open", "high", "low", "close", "volume"}
 
 
-def build_snapshot(rows, captured: int) -> dict:
+def build_snapshot(rows, captured: int, symbol: str = "SPY") -> dict:
+    if type(symbol) is not str or symbol not in ALLOWED_SYMBOLS:
+        raise ValueError("symbol denied")
     if type(captured) is not int or captured <= 0 or type(rows) is not list or not 1 <= len(rows) <= 5:
         raise ValueError("invalid history")
     previous = 0
@@ -49,17 +53,23 @@ def build_snapshot(rows, captured: int) -> dict:
     raw = json.dumps(rows, separators=(",", ":"), allow_nan=False).encode("ascii")
     return {"schema": "YAHOO_HISTORY_SNAPSHOT_V1",
             "provider": "Yahoo Finance via original yfinance",
-            "symbol": "SPY", "period": "5d", "interval": "1d",
+            "symbol": symbol, "period": "5d", "interval": "1d",
             "adjustment": "AUTO_ADJUST_TRUE_BACK_ADJUST_FALSE",
             "captured_at_unix": captured,
             "bars_base64": base64.b64encode(raw).decode("ascii"),
             "bars_sha256": hashlib.sha256(raw).hexdigest()}
 
 
-def capture(directory: Path) -> None:
-    if os.environ.get("FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK") != ACK:
+def capture(directory: Path, symbol: str = "SPY") -> None:
+    ack = os.environ.get("FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK")
+    if type(symbol) is not str or symbol not in ALLOWED_SYMBOLS:
+        raise ValueError("symbol denied")
+    if ack != MULTI_ACK and not (ack == ACK and symbol == "SPY"):
         raise ValueError("explicit opt-in required")
     private_directory(directory)
+    if symbol != "SPY":
+        directory = directory / symbol
+        private_directory(directory)
     lock = os.open(directory / ".capture.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
     try:
         st = os.fstat(lock)
@@ -71,10 +81,10 @@ def capture(directory: Path) -> None:
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fincept-qt" / "scripts"))
         import yfinance_data as original
         original._NET_TIMEOUT = 6.0
-        rows = original.get_historical_period("SPY", "5d", "1d")
-        snapshot = build_snapshot(rows, int(time.time()))
+        rows = original.get_historical_period(symbol, "5d", "1d")
+        snapshot = build_snapshot(rows, int(time.time()), symbol)
         publish(directory, snapshot)
-        print("FINCEPT_F2_HISTORY_CAPTURE_OK", "bars="+str(len(rows)),
+        print("FINCEPT_F2_HISTORY_CAPTURE_OK", "symbol="+symbol, "bars="+str(len(rows)),
               "captured_at_unix="+str(snapshot["captured_at_unix"]),
               "sha256="+snapshot["bars_sha256"])
     finally:
@@ -84,9 +94,10 @@ def capture(directory: Path) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--inbox", required=True, type=Path)
+    parser.add_argument("--symbol", default="SPY", choices=sorted(ALLOWED_SYMBOLS))
     args = parser.parse_args()
     try:
-        capture(args.inbox)
+        capture(args.inbox, args.symbol)
     except Exception:
         # Never print provider error strings, cookies, headers or prices.
         print("FINCEPT_F2_HISTORY_CAPTURE_UNAVAILABLE")

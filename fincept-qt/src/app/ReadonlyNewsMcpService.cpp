@@ -357,7 +357,8 @@ int run_readonly_news_mcp_service(int argc, char* argv[]) {
     std::size_t expected_tools = 1;
     if (!history_ack.isEmpty()) {
         const QString directory = home + QLatin1String("/history-ingress");
-        if (history_ack != "SPY_YAHOO_HISTORY_SNAPSHOT_V1" ||
+        const bool multi_asset = history_ack == "MULTI_YAHOO_HISTORY_SNAPSHOT_V1";
+        if ((!multi_asset && history_ack != "SPY_YAHOO_HISTORY_SNAPSHOT_V1") ||
             !private_service_home(directory, ::geteuid()) ||
             !fincept::services::MarketDataService::instance().configure_readonly_history_inbox(directory)) {
             diagnostic("FINCEPT_F2_DENIED_HISTORY_CONFIGURATION");
@@ -373,8 +374,8 @@ int run_readonly_news_mcp_service(int argc, char* argv[]) {
                 tool.auth_required != fincept::mcp::AuthLevel::None || !tool.handler)
                 break;
             auto original = std::move(tool.handler);
-            tool.handler = [original](const QJsonObject& args) -> fincept::mcp::ToolResult {
-                if (args.value("symbol").toString() != QLatin1String("SPY") ||
+            tool.handler = [original, multi_asset](const QJsonObject& args) -> fincept::mcp::ToolResult {
+                if (!fincept::services::MarketDataService::readonly_history_symbol_allowed(args.value("symbol").toString(), multi_asset) ||
                     args.value("period").toString() != QLatin1String("5d") ||
                     args.value("interval").toString() != QLatin1String("1d"))
                     return fincept::mcp::ToolResult::fail(QStringLiteral("FINCEPT_UNAVAILABLE"));

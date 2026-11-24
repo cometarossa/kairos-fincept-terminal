@@ -556,11 +556,12 @@ def test_history_inbox_is_explicit_and_original_decoder_only():
     assert 'history_integrity::decode(QJsonDocument::fromJson(bars), now)' in markets
     start = markets.index("void MarketDataService::fetch_history(")
     end = markets.index("QStringList args;", start)
-    assert "read_history_inbox(readonly_history_inbox_)" in markets[start:end]
+    assert "read_history_inbox(readonly_history_inbox_, symbol)" in markets[start:end]
     assert "return; // No PythonRunner fallback" in markets[start:end]
 
 
-def test_original_history_inbox_native_valid_stale_and_wrong_symbol(native_bin):
+@pytest.mark.parametrize("multi_asset", [False, True])
+def test_original_history_inbox_native_valid_stale_and_wrong_symbol(native_bin, multi_asset):
     import base64
     import hashlib
     with tempfile.TemporaryDirectory(prefix="fincept-f2-history-", dir="/private/tmp" if sys.platform == "darwin" else None) as name:
@@ -570,24 +571,26 @@ def test_original_history_inbox_native_valid_stale_and_wrong_symbol(native_bin):
         inbox.mkdir(mode=0o700)
         port = port_for_test()
         env = env_for(home, port)
-        env["FINCEPT_READONLY_HISTORY_INGRESS_ACK"] = "SPY_YAHOO_HISTORY_SNAPSHOT_V1"
+        env["FINCEPT_READONLY_HISTORY_INGRESS_ACK"] = ("MULTI_YAHOO_HISTORY_SNAPSHOT_V1" if multi_asset else "SPY_YAHOO_HISTORY_SNAPSHOT_V1")
         now = int(time.time())
         # Synthetic fixture only: not a market quote or completed trading session.
         bars = [{"timestamp": now - 86400, "open": 100, "high": 104,
                  "low": 99, "close": 102, "volume": 500}]
-        def publish(rows=bars, captured=now, tamper=False):
+        def publish(rows=bars, captured=now, tamper=False, symbol="SPY", declared_symbol=None):
+            target = inbox if symbol == "SPY" else inbox / symbol
+            target.mkdir(mode=0o700, exist_ok=True)
             raw = json.dumps(rows, separators=(",", ":")).encode()
             obj = {"schema": "YAHOO_HISTORY_SNAPSHOT_V1",
                    "provider": "Yahoo Finance via original yfinance",
-                   "symbol": "SPY", "period": "5d", "interval": "1d",
+                   "symbol": declared_symbol or symbol, "period": "5d", "interval": "1d",
                    "adjustment": "AUTO_ADJUST_TRUE_BACK_ADJUST_FALSE",
                    "captured_at_unix": captured,
                    "bars_base64": base64.b64encode(raw).decode(),
                    "bars_sha256": "0"*64 if tamper else hashlib.sha256(raw).hexdigest()}
-            tmp = inbox / ".next"
+            tmp = target / ".next"
             with tmp.open("x") as f: json.dump(obj, f)
             tmp.chmod(0o600)
-            tmp.replace(inbox / "snapshot.json")
+            tmp.replace(target / "snapshot.json")
         def history(symbol="SPY", period="5d"):
             code, body = request(port, "POST", rpc("tools/call", 9,
                 {"name": "get_history", "arguments": {"symbol": symbol,
@@ -622,6 +625,27 @@ def test_original_history_inbox_native_valid_stale_and_wrong_symbol(native_bin):
                 assert data["symbol"] == "SPY" and data["count"] == 1
                 assert data["bars"][0]["close"] == 102
                 assert history("AAPL")["isError"] and history(period="1mo")["isError"]
+                for symbol in ["EURUSD=X","GBPUSD=X","JPY=X","AUDUSD=X","CAD=X","^GSPC","^NDX","^GDAXI","AAPL","BTC-USD","GC=F"]:
+                    publish(symbol=symbol)
+                    r = history(symbol)
+                    if multi_asset:
+                        assert r["isError"] is False
+                        assert r["structuredContent"]["symbol"] == symbol
+                    else:
+                        assert r["isError"]
+                if multi_asset:
+                    publish(symbol="EURUSD=X", declared_symbol="SPY")
+                    assert history("EURUSD=X")["isError"]
+                    assert not history()["isError"]
+                    publish(symbol="EURUSD=X")
+                    (inbox / "EURUSD=X").chmod(0o755)
+                    assert history("EURUSD=X")["isError"]
+                    (inbox / "EURUSD=X").chmod(0o700)
+                    (inbox / "EURUSD=X" / "snapshot.json").unlink()
+                    (inbox / "EURUSD=X").rmdir()
+                    (inbox / "EURUSD=X").symlink_to(inbox, target_is_directory=True)
+                    assert history("EURUSD=X")["isError"]
+                assert history("../SPY")["isError"] and history("ZZZ")["isError"]
                 publish(tamper=True)
                 assert history()["isError"]
                 publish(captured=now-901)
@@ -691,4 +715,22 @@ def test_history_capture_no_opt_in_never_imports_provider(tmp_path, monkeypatch)
     monkeypatch.delenv("FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK", raising=False)
     with pytest.raises(ValueError, match="explicit opt-in"):
         capture.capture(tmp_path)
+    assert not list(tmp_path.iterdir())
+
+
+def test_multi_history_producer_allowlist_and_legacy_opt_in(tmp_path, monkeypatch):
+    capture = _history_capture_module()
+    markets = (ROOT / "services" / "markets" / "MarketDataService.cpp").read_text()
+    assert capture.ALLOWED_SYMBOLS == frozenset(["SPY","EURUSD=X","GBPUSD=X","JPY=X","AUDUSD=X","CAD=X","^GSPC","^NDX","^GDAXI","AAPL","BTC-USD","GC=F"])
+    for symbol in capture.ALLOWED_SYMBOLS:
+        assert '"'+symbol+'"' in markets
+    now = int(time.time())
+    bar = {"timestamp": now-86400, "open": 100, "high": 104, "low": 99, "close": 102, "volume": 0}
+    for symbol in capture.ALLOWED_SYMBOLS:
+        assert capture.build_snapshot([bar], now, symbol)["symbol"] == symbol
+    monkeypatch.setenv("FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK", capture.ACK)
+    with pytest.raises(ValueError, match="explicit opt-in"):
+        capture.capture(tmp_path, "EURUSD=X")
+    with pytest.raises(ValueError, match="symbol denied"):
+        capture.capture(tmp_path, "../SPY")
     assert not list(tmp_path.iterdir())

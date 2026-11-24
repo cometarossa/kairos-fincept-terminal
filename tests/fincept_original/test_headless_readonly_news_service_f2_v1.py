@@ -346,3 +346,203 @@ def test_actual_original_service_authenticated_cache_only_and_sigterm(native_bin
             assert probe.connect_ex(("127.0.0.1", port)) != 0, "MCP listener survived shutdown"
         assert bearer not in text
         assert "IGDemoCanonicalAdapter" not in text
+
+
+def test_bounded_ingress_uses_original_parser_and_absolute_expiry():
+    assert "NewsService::parse_rss_xml(xml, feed)" in SOURCE
+    assert "NewsService::serialize_articles(selected)" in SOURCE
+    assert "O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC" in SOURCE
+    assert "QXmlStreamReader::DTD" in SOURCE
+    assert "xml.toBase64() != encoded" in SOURCE
+    assert "captured + kSnapshotTtl" in SOURCE
+    assert "captured < last_capture_" in SOURCE
+    assert "if (captured == last_capture_)" in SOURCE
+    assert 'qgetenv("FINCEPT_READONLY_NEWS_INGRESS_ACK")' in SOURCE
+    assert '(inbox && !inbox->ready())' in SOURCE
+
+
+def test_actual_native_inbox_fresh_tamper_replay_and_absolute_expiry(native_bin):
+    import base64
+    import hashlib
+    from email.utils import formatdate
+
+    with tempfile.TemporaryDirectory(prefix="fincept-f2-inbox-", dir="/private/tmp" if sys.platform == "darwin" else None) as name:
+        home = Path(name)
+        bearer = private_profile(home)
+        directory = home / "ingress"
+        directory.mkdir(mode=0o700)
+        port = port_for_test()
+        env = env_for(home, port)
+        env["FINCEPT_READONLY_NEWS_INGRESS_ACK"] = "CNBC_SNAPSHOT_V1"
+
+        def snapshot(captured, *, publisher=None, tamper=False, headline="Synthetic inbox QA"):
+            # Local synthetic XML, never a real source claim or broker evidence.
+            when = formatdate(captured if publisher is None else publisher, usegmt=True)
+            xml = (f'<rss version="2.0"><channel><item><title>{headline}</title>'
+                   f'<link>https://www.cnbc.com/qa-only-synthetic.html</link>'
+                   f'<pubDate>{when}</pubDate></item></channel></rss>').encode()
+            return {"schema": "CNBC_SNAPSHOT_V1",
+                    "source_url": "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",
+                    "captured_at_unix": captured,
+                    "rss_sha256": "0" * 64 if tamper else hashlib.sha256(xml).hexdigest(),
+                    "rss_base64": base64.b64encode(xml).decode("ascii")}
+
+        def publish(data):
+            tmp = directory / ".next"
+            with tmp.open("x") as file:
+                json.dump(data, file)
+            tmp.chmod(0o600)
+            tmp.replace(directory / "snapshot.json")
+
+        def result():
+            code, body = request(port, "POST", rpc("tools/call", 42,
+                {"name": "get_news", "arguments": {"category": "MARKETS",
+                 "time_range": "24H", "limit": 5, "include_publisher_datetime": True}}), bearer)
+            assert code == 200
+            return body["result"]
+
+        def wait_for(expect_available):
+            deadline = time.monotonic() + 9
+            while time.monotonic() < deadline:
+                r = result()
+                if (r.get("isError") is False) == expect_available:
+                    return r
+                time.sleep(.2)
+            pytest.fail("inbox availability did not reach expected state")
+
+        output = home / "inbox.log"
+        now = int(time.time())
+        # Nearly expired capture must not acquire a new ten-minute lifetime.
+        near_expiry = snapshot(now - 593)
+        publish(near_expiry)
+        cmd = [native_bin, "--serve-readonly-news"]
+        if sys.platform == "darwin" and os.environ.get("FINCEPT_F2_MAC_SANDBOX_EGRESS_DENIED") == "1":
+            policy = '(version 1) (allow default) (deny network-outbound (remote ip "*:*")) (allow network-outbound (remote ip "localhost:*"))'
+            cmd = ["/usr/bin/sandbox-exec", "-p", policy, *cmd]
+        with output.open("w+") as log:
+            child = subprocess.Popen(cmd, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                     start_new_session=True)
+            try:
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    assert child.poll() is None
+                    try:
+                        if request(port, "GET")[0] == 200:
+                            break
+                    except (OSError, TimeoutError, http.client.HTTPException):
+                        pass
+                    time.sleep(.1)
+                else:
+                    pytest.fail("original inbox service not ready")
+                r = wait_for(True)
+                assert r["structuredContent"]["articles"][0]["headline"] == "Synthetic inbox QA"
+                assert r["structuredContent"]["articles"][0]["publisher_datetime_attested"] is False
+                wait_for(False)
+                fresh = snapshot(int(time.time()))
+                publish(fresh)
+                assert wait_for(True)["structuredContent"]["count"] == 1
+                bad = dict(fresh, rss_sha256="0" * 64)
+                publish(bad)
+                assert "FINCEPT_UNAVAILABLE" in json.dumps(wait_for(False))
+                # Same capture cannot be used to re-admit after invalidation.
+                publish(fresh)
+                time.sleep(5.5)
+                assert result()["isError"]
+                # An older, still-in-window capture cannot roll back the latest.
+                publish(snapshot(fresh["captured_at_unix"] - 1))
+                time.sleep(5.5)
+                assert result()["isError"]
+                publish(snapshot(int(time.time()), publisher=int(time.time()) - 172800))
+                time.sleep(5.5)
+                assert result()["isError"]
+                publish(snapshot(int(time.time())))
+                assert wait_for(True)["structuredContent"]["count"] == 1
+                (directory / "snapshot.json").chmod(0o644)
+                assert "FINCEPT_UNAVAILABLE" in json.dumps(wait_for(False))
+            finally:
+                if child.poll() is None:
+                    child.send_signal(signal.SIGTERM)
+                    try:
+                        child.wait(timeout=8)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(child.pid, signal.SIGKILL)
+                        child.wait(timeout=4)
+        receipt = output.read_text(errors="replace")
+        assert child.returncode == 0
+        assert "FINCEPT_F2_INGRESS_ACCEPTED" in receipt
+        assert "FINCEPT_F2_INGRESS_UNAVAILABLE" in receipt
+        assert "FINCEPT_F2_READONLY_NEWS_STOPPED" in receipt
+        assert bearer not in receipt
+        with socket.socket() as probe:
+            probe.settimeout(1)
+            assert probe.connect_ex(("127.0.0.1", port)) != 0
+
+
+def _capture_module():
+    import importlib.util
+    path = ROOT.parents[1] / "scripts" / "capture_public_cnbc_rss_f2_v1.py"
+    spec = importlib.util.spec_from_file_location("f2_capture", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _capture_xml(captured, url="https://www.cnbc.com/qa-synthetic.html"):
+    from email.utils import formatdate
+    return (f'<rss version="2.0"><channel><item><title>Synthetic QA</title>'
+            f'<link>{url}</link><pubDate>{formatdate(captured, usegmt=True)}</pubDate>'
+            f'</item></channel></rss>').encode()
+
+
+def test_capture_producer_atomic_envelope_and_no_replay(tmp_path):
+    import base64
+    import hashlib
+    import stat
+    capture = _capture_module()
+    directory = tmp_path / "inbox"
+    directory.mkdir(mode=0o700)
+    if os.geteuid() == 0:
+        pytest.skip("producer must run as a non-root user")
+    now = int(time.time())
+    raw = _capture_xml(now)
+    snapshot = capture.build_snapshot(raw, now)
+    assert snapshot["rss_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert base64.b64decode(snapshot["rss_base64"], validate=True) == raw
+    capture.publish(directory, snapshot)
+    target = directory / "snapshot.json"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert json.loads(target.read_bytes()) == snapshot
+    with pytest.raises(ValueError):
+        capture.publish(directory, snapshot)
+    assert json.loads(target.read_bytes()) == snapshot
+    later = capture.build_snapshot(_capture_xml(now + 1), now + 1)
+    capture.publish(directory, later)
+    assert json.loads(target.read_bytes()) == later
+    assert list(directory.iterdir()) == [target]
+
+
+@pytest.mark.parametrize("case", ["old", "wrong_host", "doctype", "oversized", "empty"])
+def test_capture_producer_refuses_unsafe_or_ineligible_xml(case):
+    capture = _capture_module()
+    now = int(time.time())
+    raw = {"old": _capture_xml(now - 172800),
+           "wrong_host": _capture_xml(now, "https://example.org/qa"),
+           "doctype": b'<!DOCTYPE rss [<!ENTITY x "bad">]>' + _capture_xml(now),
+           "oversized": b"x" * 180001, "empty": b""}[case]
+    with pytest.raises(ValueError):
+        capture.build_snapshot(raw, now)
+
+
+def test_capture_producer_preserves_previous_on_unsafe_destination(tmp_path):
+    capture = _capture_module()
+    if os.geteuid() == 0:
+        pytest.skip("producer must run as a non-root user")
+    directory = tmp_path / "inbox"
+    directory.mkdir(mode=0o700)
+    target = directory / "snapshot.json"
+    target.write_text("[]")
+    target.chmod(0o600)
+    now = int(time.time())
+    with pytest.raises(ValueError):
+        capture.publish(directory, capture.build_snapshot(_capture_xml(now), now))
+    assert target.read_text() == "[]"

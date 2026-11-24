@@ -20,6 +20,13 @@
 #include <QFileInfo>
 #include <QJsonObject>
 #include <QTimer>
+#include <QCryptographicHash>
+#include <QDateTime>
+#include <QJsonDocument>
+#include <QUrl>
+#include <QXmlStreamReader>
+#include <atomic>
+#include <memory>
 
 #include <cstdio>
 #include <csignal>
@@ -27,8 +34,64 @@
 
 #if defined(Q_OS_UNIX)
 #include <sys/stat.h>
+#include <fcntl.h>
 #include <unistd.h>
 #endif
+
+// Private, production-scoped access to the original parser and cache codec.
+// No generic provider API, no synthetic timestamp and no network request.
+namespace fincept::services {
+struct ReadonlyNewsIngress {
+    static QString parse_cnbc(const QByteArray& xml, qint64 now) {
+        QXmlStreamReader reader(xml);
+        int depth = 0, items = 0;
+        bool root = false;
+        while (!reader.atEnd()) {
+            const auto token = reader.readNext();
+            if (token == QXmlStreamReader::DTD || token == QXmlStreamReader::EntityReference)
+                return {};
+            if (token == QXmlStreamReader::StartElement) {
+                if (++depth > 64)
+                    return {};
+                if (depth == 1) {
+                    if (reader.name() != QLatin1String("rss"))
+                        return {};
+                    root = true;
+                }
+                if (reader.name() == QLatin1String("item") && ++items > 100)
+                    return {};
+            } else if (token == QXmlStreamReader::EndElement) {
+                --depth;
+            }
+        }
+        if (reader.hasError() || !root || depth != 0 || items < 1)
+            return {};
+        const RSSFeed feed{"cnbc-f2-ingress", "CNBC public finance",
+            "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114",
+            "MARKETS", "GLOBAL", "CNBC", 2};
+        const auto parsed = NewsService::parse_rss_xml(xml, feed);
+        if (parsed.size() > 100)
+            return {};
+        QVector<NewsArticle> selected;
+        QSet<QString> seen;
+        for (const auto& article : parsed) {
+            const QUrl link(article.link, QUrl::StrictMode);
+            if (article.publisher_datetime_field != QLatin1String("pubDate") ||
+                article.publisher_datetime_ts < now - 86400 ||
+                article.publisher_datetime_ts > now + 300 ||
+                article.headline.isEmpty() || article.id.isEmpty() ||
+                !link.isValid() || link.scheme() != QLatin1String("https") ||
+                (link.host() != QLatin1String("www.cnbc.com") && link.host() != QLatin1String("cnbc.com")) ||
+                !link.userInfo().isEmpty() || link.port(-1) != -1 ||
+                seen.contains(article.id))
+                continue;
+            seen.insert(article.id);
+            selected.append(article);
+        }
+        return selected.isEmpty() ? QString{} : NewsService::serialize_articles(selected);
+    }
+};
+}
 
 namespace fincept::app {
 namespace {
@@ -68,6 +131,104 @@ void diagnostic(const char* code) {
     std::fprintf(stderr, "%s\n", code);
     std::fflush(stderr);
 }
+
+#if defined(Q_OS_UNIX)
+// The file is written atomically by a separately admitted local capturer.
+// Its hash detects corruption, not independent publisher truth or attestation.
+constexpr qint64 kSnapshotTtl = 600;
+constexpr qint64 kMaxEnvelope = 250000;
+constexpr auto kIngressAck = "CNBC_SNAPSHOT_V1";
+constexpr auto kSourceUrl =
+    "https://search.cnbc.com/rs/search/combinedcms/view.xml?partnerId=wrss01&id=100003114";
+
+class SnapshotInbox {
+  public:
+    explicit SnapshotInbox(QString directory) : directory_(std::move(directory)) {}
+
+    bool ready() const {
+        return expires_.load() > QDateTime::currentSecsSinceEpoch();
+    }
+
+    void refresh() {
+        if (!private_service_home(directory_, ::geteuid())) {
+            deny();
+            return;
+        }
+        const auto path = QFile::encodeName(directory_ + QLatin1String("/snapshot.json"));
+        const int fd = ::open(path.constData(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+        if (fd < 0) {
+            deny();
+            return;
+        }
+        struct stat st {};
+        if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
+            st.st_uid != ::geteuid() || (st.st_mode & 0777) != 0600 ||
+            st.st_nlink != 1 || st.st_size <= 0 || st.st_size > kMaxEnvelope) {
+            ::close(fd);
+            deny();
+            return;
+        }
+        QFile file;
+        if (!file.open(fd, QIODevice::ReadOnly, QFileDevice::AutoCloseHandle)) {
+            ::close(fd);
+            deny();
+            return;
+        }
+        const QByteArray raw = file.read(kMaxEnvelope + 1);
+        QJsonParseError error;
+        const auto doc = QJsonDocument::fromJson(raw, &error);
+        if (raw.size() > kMaxEnvelope || error.error != QJsonParseError::NoError || !doc.isObject()) {
+            deny();
+            return;
+        }
+        const auto envelope = doc.object();
+        const auto now = QDateTime::currentSecsSinceEpoch();
+        const auto captured = envelope.value("captured_at_unix").toInteger(-1);
+        const QByteArray encoded = envelope.value("rss_base64").toString().toLatin1();
+        const QByteArray xml = QByteArray::fromBase64(encoded);
+        const QByteArray digest = QCryptographicHash::hash(xml, QCryptographicHash::Sha256).toHex();
+        if (envelope.size() != 5 || envelope.value("schema").toString() != QLatin1String(kIngressAck) ||
+            envelope.value("source_url").toString() != QLatin1String(kSourceUrl) ||
+            captured <= 0 || captured > now || captured <= now - kSnapshotTtl ||
+            xml.isEmpty() || xml.size() > 180000 || xml.toBase64() != encoded ||
+            envelope.value("rss_sha256").toString().toLatin1() != digest ||
+            captured < last_capture_ || (captured == last_capture_ && digest != last_digest_)) {
+            deny();
+            return;
+        }
+        if (captured == last_capture_)
+            return; // Same capture never extends expiry or re-admits after invalidation.
+        const QString payload = fincept::services::ReadonlyNewsIngress::parse_cnbc(xml, now);
+        const auto remaining = captured + kSnapshotTtl - QDateTime::currentSecsSinceEpoch();
+        if (payload.isEmpty() || remaining <= 0) {
+            deny();
+            return;
+        }
+        auto& cache = fincept::CacheManager::instance();
+        expires_.store(0);
+        cache.put("news:articles", payload, static_cast<int>(remaining), "f2_public_rss_ingress");
+        if (cache.get("news:articles").toString() != payload) {
+            deny();
+            return;
+        }
+        last_capture_ = captured;
+        last_digest_ = digest;
+        expires_.store(captured + kSnapshotTtl);
+        diagnostic("FINCEPT_F2_INGRESS_ACCEPTED");
+    }
+
+  private:
+    void deny() {
+        if (expires_.exchange(0) != 0)
+            diagnostic("FINCEPT_F2_INGRESS_UNAVAILABLE");
+        fincept::CacheManager::instance().remove("news:articles");
+    }
+    QString directory_;
+    qint64 last_capture_ = 0;
+    QByteArray last_digest_;
+    std::atomic<qint64> expires_{0};
+};
+#endif
 
 } // namespace
 
@@ -138,6 +299,26 @@ int run_readonly_news_mcp_service(int argc, char* argv[]) {
     auto& news = fincept::services::NewsService::instance();
     news.enforce_cache_only_mode();
 
+    // Opt-in only. The default installed cache-only service is unchanged.
+    const auto ingress_ack = qgetenv("FINCEPT_READONLY_NEWS_INGRESS_ACK");
+    std::shared_ptr<SnapshotInbox> inbox;
+    QTimer ingress_poll;
+    if (!ingress_ack.isEmpty()) {
+        const QString directory = home + QLatin1String("/ingress");
+        if (ingress_ack != kIngressAck || !private_service_home(directory, ::geteuid())) {
+            diagnostic("FINCEPT_F2_DENIED_INGRESS_CONFIGURATION");
+            fincept::CacheDatabase::instance().close();
+            return 2;
+        }
+        // Never inherit previously seeded or synthetic cache when inbox mode starts.
+        fincept::CacheManager::instance().remove("news:articles");
+        inbox = std::make_shared<SnapshotInbox>(directory);
+        inbox->refresh();
+        ingress_poll.setInterval(5000);
+        QObject::connect(&ingress_poll, &QTimer::timeout, &app, [inbox]() { inbox->refresh(); });
+        ingress_poll.start();
+    }
+
     // Expose EXACTLY the existing, original read-only get_news tool.
     // Its handler is wrapped only to reject force-refresh and no-cache; the
     // original NewsService independently denies network even in TOCTOU races.
@@ -153,8 +334,8 @@ int run_readonly_news_mcp_service(int argc, char* argv[]) {
             return 1;
         }
         auto original_handler = std::move(tool.handler);
-        tool.handler = [original_handler](const QJsonObject& args) -> fincept::mcp::ToolResult {
-            if (args.value(QStringLiteral("force")).toBool(false) ||
+        tool.handler = [original_handler, inbox](const QJsonObject& args) -> fincept::mcp::ToolResult {
+            if ((inbox && !inbox->ready()) || args.value(QStringLiteral("force")).toBool(false) ||
                 fincept::CacheManager::instance().get(QStringLiteral("news:articles")).isNull())
                 return fincept::mcp::ToolResult::fail(QStringLiteral("FINCEPT_UNAVAILABLE"));
             return original_handler(args);
@@ -195,6 +376,7 @@ int run_readonly_news_mcp_service(int argc, char* argv[]) {
     std::fflush(stdout);
     const int rc = app.exec();
     stop_poll.stop();
+    ingress_poll.stop();
     server.stop();
     fincept::mcp::McpProvider::instance().clear();
     fincept::CacheDatabase::instance().close();

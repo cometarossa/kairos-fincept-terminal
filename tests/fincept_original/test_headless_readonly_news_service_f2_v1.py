@@ -556,7 +556,7 @@ def test_history_inbox_is_explicit_and_original_decoder_only():
     assert 'history_integrity::decode(QJsonDocument::fromJson(bars), now)' in markets
     start = markets.index("void MarketDataService::fetch_history(")
     end = markets.index("QStringList args;", start)
-    assert "read_history_inbox(readonly_history_inbox_, symbol)" in markets[start:end]
+    assert "read_history_inbox(readonly_history_inbox_, symbol, period)" in markets[start:end]
     assert "return; // No PythonRunner fallback" in markets[start:end]
 
 
@@ -733,4 +733,22 @@ def test_multi_history_producer_allowlist_and_legacy_opt_in(tmp_path, monkeypatc
         capture.capture(tmp_path, "EURUSD=X")
     with pytest.raises(ValueError, match="symbol denied"):
         capture.capture(tmp_path, "../SPY")
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("symbol", ["SPY", "EURUSD=X"])
+def test_six_month_capture_requires_depth_and_explicit_ack(symbol, tmp_path, monkeypatch):
+    capture = _history_capture_module()
+    now = int(time.time())
+    bars = [{"timestamp": now-(120-i)*129600, "open": 100, "high": 104,
+             "low": 99, "close": 102, "volume": 0} for i in range(120)]
+    assert capture.build_snapshot(bars, now, symbol, "6mo")["period"] == "6mo"
+    for invalid in (bars[:99], bars[-100:][:99], bars + bars, [dict(x,timestamp=now-120+i) for i,x in enumerate(bars)]):
+        with pytest.raises(ValueError):
+            capture.build_snapshot(invalid, now, symbol, "6mo")
+    with pytest.raises(ValueError, match="window denied"):
+        capture.build_snapshot(bars, now, "AAPL", "6mo")
+    monkeypatch.setenv("FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK", capture.MULTI_ACK)
+    with pytest.raises(ValueError, match="explicit opt-in"):
+        capture.capture(tmp_path, symbol, "6mo")
     assert not list(tmp_path.iterdir())

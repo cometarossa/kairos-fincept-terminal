@@ -354,7 +354,7 @@ int run_readonly_news_mcp_service(int argc, char* argv[]) {
     // Explicit second allowlisted original read-only tool. Default news-only
     // catalogue above remains unchanged without this separate opt-in.
     const auto history_ack = qgetenv("FINCEPT_READONLY_HISTORY_INGRESS_ACK");
-    int expected_tools = 1;
+    std::size_t expected_tools = 1;
     if (!history_ack.isEmpty()) {
         const QString directory = home + QLatin1String("/history-ingress");
         if (history_ack != "SPY_YAHOO_HISTORY_SNAPSHOT_V1" ||
@@ -414,7 +414,7 @@ int run_readonly_news_mcp_service(int argc, char* argv[]) {
             app.quit();
     });
     stop_poll.start();
-    std::printf("FINCEPT_F2_READONLY_NEWS_READY port=%u tools=%d actions=false provider_egress=false\n",
+    std::printf("FINCEPT_F2_READONLY_NEWS_READY port=%u tools=%zu actions=false provider_egress=false\n",
                 static_cast<unsigned>(server.port()), expected_tools);
     std::fflush(stdout);
     const int rc = app.exec();

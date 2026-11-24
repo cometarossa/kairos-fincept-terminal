@@ -357,7 +357,8 @@ int run_readonly_news_mcp_service(int argc, char* argv[]) {
     std::size_t expected_tools = 1;
     if (!history_ack.isEmpty()) {
         const QString directory = home + QLatin1String("/history-ingress");
-        const bool multi_asset = history_ack == "MULTI_YAHOO_HISTORY_SNAPSHOT_V1";
+        const bool long_window = history_ack == "DUAL_WINDOW_YAHOO_HISTORY_SNAPSHOT_V1";
+        const bool multi_asset = long_window || history_ack == "MULTI_YAHOO_HISTORY_SNAPSHOT_V1";
         if ((!multi_asset && history_ack != "SPY_YAHOO_HISTORY_SNAPSHOT_V1") ||
             !private_service_home(directory, ::geteuid()) ||
             !fincept::services::MarketDataService::instance().configure_readonly_history_inbox(directory)) {
@@ -374,9 +375,14 @@ int run_readonly_news_mcp_service(int argc, char* argv[]) {
                 tool.auth_required != fincept::mcp::AuthLevel::None || !tool.handler)
                 break;
             auto original = std::move(tool.handler);
-            tool.handler = [original, multi_asset](const QJsonObject& args) -> fincept::mcp::ToolResult {
+            tool.handler = [original, multi_asset, long_window](const QJsonObject& args) -> fincept::mcp::ToolResult {
+                const auto symbol = args.value("symbol").toString();
+                const auto period = args.value("period").toString();
+                const bool allowed_window = period == QLatin1String("5d") ||
+                    (long_window && period == QLatin1String("6mo") &&
+                     (symbol == QLatin1String("SPY") || symbol == QLatin1String("EURUSD=X")));
                 if (!fincept::services::MarketDataService::readonly_history_symbol_allowed(args.value("symbol").toString(), multi_asset) ||
-                    args.value("period").toString() != QLatin1String("5d") ||
+                    !allowed_window ||
                     args.value("interval").toString() != QLatin1String("1d"))
                     return fincept::mcp::ToolResult::fail(QStringLiteral("FINCEPT_UNAVAILABLE"));
                 return original(args);

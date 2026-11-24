@@ -178,6 +178,7 @@ class MarketDataService : public QObject, public fincept::datahub::Producer {
     std::optional<HistorySelftestFixture> history_selftest_fixture_;
     QString readonly_history_inbox_;
     bool readonly_history_multi_asset_ = false;
+    bool readonly_history_long_window_ = false;
 
     MarketDataService();
     void flush_batch();

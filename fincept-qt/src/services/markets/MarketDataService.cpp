@@ -59,12 +59,16 @@ void store_quote_in_cache(const QuoteData& quote, int ttl_seconds) {
 
 // Exact bounded 5d/1d research-only Yahoo history, adjusted OHLC.
 // The local capture clock is not an exchange as-of or a completed-bar claim.
-std::optional<QVector<HistoryPoint>> read_history_inbox(const QString& directory, const QString& symbol) {
+std::optional<QVector<HistoryPoint>> read_history_inbox(const QString& directory, const QString& symbol, const QString& period) {
 #if !defined(Q_OS_UNIX)
     Q_UNUSED(directory);
     Q_UNUSED(symbol);
+    Q_UNUSED(period);
     return std::nullopt;
 #else
+    const bool long_window = period == QLatin1String("6mo");
+    const int max_envelope = long_window ? 70000 : 32768;
+    const int max_payload = long_window ? 49152 : 16384;
     const QByteArray dir = QFile::encodeName(directory);
     int dirfd = ::open(dir.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
     if (dirfd < 0)
@@ -77,8 +81,8 @@ std::optional<QVector<HistoryPoint>> read_history_inbox(const QString& directory
     }
     // SPY retains its original layout. Other exact allowlisted symbols have
     // independent private subdirectories and cannot supply a path.
-    if (symbol != QLatin1String("SPY")) {
-        const QByteArray name = symbol.toLatin1();
+    if (long_window || symbol != QLatin1String("SPY")) {
+        const QByteArray name = long_window ? QByteArray("long-") + symbol.toLatin1() : symbol.toLatin1();
         const int child = ::openat(dirfd, name.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
         ::close(dirfd);
         dirfd = child;
@@ -97,7 +101,7 @@ std::optional<QVector<HistoryPoint>> read_history_inbox(const QString& directory
     struct stat st {};
     if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
         st.st_uid != ::geteuid() || (st.st_mode & 0777) != 0600 ||
-        st.st_nlink != 1 || st.st_size <= 0 || st.st_size > 32768) {
+        st.st_nlink != 1 || st.st_size <= 0 || st.st_size > max_envelope) {
         ::close(fd);
         return std::nullopt;
     }
@@ -106,10 +110,10 @@ std::optional<QVector<HistoryPoint>> read_history_inbox(const QString& directory
         ::close(fd);
         return std::nullopt;
     }
-    const QByteArray raw = file.read(32769);
+    const QByteArray raw = file.read(max_envelope + 1);
     QJsonParseError error;
     const auto envelope = QJsonDocument::fromJson(raw, &error);
-    if (raw.size() > 32768 || error.error != QJsonParseError::NoError || !envelope.isObject())
+    if (raw.size() != st.st_size || raw.size() > max_envelope || error.error != QJsonParseError::NoError || !envelope.isObject())
         return std::nullopt;
     const auto obj = envelope.object();
     const qint64 now = QDateTime::currentSecsSinceEpoch();
@@ -120,15 +124,17 @@ std::optional<QVector<HistoryPoint>> read_history_inbox(const QString& directory
         obj.value("schema").toString() != QLatin1String("YAHOO_HISTORY_SNAPSHOT_V1") ||
         obj.value("provider").toString() != QLatin1String("Yahoo Finance via original yfinance") ||
         obj.value("symbol").toString() != symbol ||
-        obj.value("period").toString() != QLatin1String("5d") ||
+        obj.value("period").toString() != period ||
         obj.value("interval").toString() != QLatin1String("1d") ||
         obj.value("adjustment").toString() != QLatin1String("AUTO_ADJUST_TRUE_BACK_ADJUST_FALSE") ||
-        captured <= 0 || captured > now || captured <= now - 900 ||
-        bars.isEmpty() || bars.size() > 16384 || bars.toBase64() != encoded ||
+        captured <= 0 || captured > now || captured <= now - (long_window ? 86400 : 900) ||
+        bars.isEmpty() || bars.size() > max_payload || bars.toBase64() != encoded ||
         obj.value("bars_sha256").toString().toLatin1() != QCryptographicHash::hash(bars, QCryptographicHash::Sha256).toHex())
         return std::nullopt;
     const auto decoded = history_integrity::decode(QJsonDocument::fromJson(bars), now);
-    if (!decoded || decoded->size() > 5 || decoded->first().timestamp < captured - 14 * 86400 ||
+    if (!decoded || decoded->size() > (long_window ? 160 : 5) ||
+        (long_window && (decoded->size() < 100 || decoded->first().timestamp > captured - 140 * 86400)) ||
+        decoded->first().timestamp < captured - (long_window ? 200 : 14) * 86400 ||
         decoded->last().timestamp > captured ||
         decoded->last().timestamp < captured - 7 * 86400)
         return std::nullopt;
@@ -722,20 +728,24 @@ bool MarketDataService::configure_readonly_history_inbox(const QString& director
     if (!readonly_history_inbox_.isEmpty() || !QCoreApplication::instance() ||
         QCoreApplication::applicationName() != QLatin1String("FinceptReadonlyNews") ||
         !QCoreApplication::arguments().contains(QStringLiteral("--serve-readonly-news")) ||
-        (ack != "SPY_YAHOO_HISTORY_SNAPSHOT_V1" && ack != "MULTI_YAHOO_HISTORY_SNAPSHOT_V1") ||
+        (ack != "SPY_YAHOO_HISTORY_SNAPSHOT_V1" && ack != "MULTI_YAHOO_HISTORY_SNAPSHOT_V1" && ack != "DUAL_WINDOW_YAHOO_HISTORY_SNAPSHOT_V1") ||
         !QDir::isAbsolutePath(directory) || QDir(directory).canonicalPath() != directory)
         return false;
     readonly_history_inbox_ = directory;
-    readonly_history_multi_asset_ = ack == "MULTI_YAHOO_HISTORY_SNAPSHOT_V1";
+    readonly_history_long_window_ = ack == "DUAL_WINDOW_YAHOO_HISTORY_SNAPSHOT_V1";
+    readonly_history_multi_asset_ = readonly_history_long_window_ || ack == "MULTI_YAHOO_HISTORY_SNAPSHOT_V1";
     return true;
 }
 
 void MarketDataService::fetch_history(const QString& symbol, const QString& period, const QString& interval,
                                       HistoryCallback cb) {
     if (!readonly_history_inbox_.isEmpty()) {
-        const auto points = readonly_history_symbol_allowed(symbol, readonly_history_multi_asset_) && period == QLatin1String("5d") &&
+        const bool allowed_window = period == QLatin1String("5d") ||
+            (readonly_history_long_window_ && period == QLatin1String("6mo") &&
+             (symbol == QLatin1String("SPY") || symbol == QLatin1String("EURUSD=X")));
+        const auto points = readonly_history_symbol_allowed(symbol, readonly_history_multi_asset_) && allowed_window &&
                             interval == QLatin1String("1d")
-            ? read_history_inbox(readonly_history_inbox_, symbol) : std::nullopt;
+            ? read_history_inbox(readonly_history_inbox_, symbol, period) : std::nullopt;
         cb(points.has_value(), points.value_or(QVector<HistoryPoint>{}));
         return; // No PythonRunner fallback, including failure and wrong window.
     }

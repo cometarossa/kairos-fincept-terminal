@@ -82,7 +82,7 @@ def publish(directory: Path, snapshot: dict) -> None:
             raise ValueError("unsafe previous envelope")
         with previous.open("rb") as existing:
             old = json.load(existing)
-        if type(old.get("captured_at_unix")) is not int or old["captured_at_unix"] >= snapshot["captured_at_unix"]:
+        if type(old) is not dict or type(old.get("captured_at_unix")) is not int or old["captured_at_unix"] >= snapshot["captured_at_unix"]:
             raise ValueError("non-increasing capture clock")
     tmp = None
     try:

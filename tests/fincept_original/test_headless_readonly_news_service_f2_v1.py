@@ -560,8 +560,10 @@ def test_history_inbox_is_explicit_and_original_decoder_only():
     assert "return; // No PythonRunner fallback" in markets[start:end]
 
 
-@pytest.mark.parametrize("multi_asset", [False, True])
-def test_original_history_inbox_native_valid_stale_and_wrong_symbol(native_bin, multi_asset):
+@pytest.mark.parametrize("mode", ["single", "multi", "dual"])
+def test_original_history_inbox_native_valid_stale_and_wrong_symbol(native_bin, mode):
+    multi_asset = mode != "single"
+    long_window = mode == "dual"
     import base64
     import hashlib
     with tempfile.TemporaryDirectory(prefix="fincept-f2-history-", dir="/private/tmp" if sys.platform == "darwin" else None) as name:
@@ -571,18 +573,18 @@ def test_original_history_inbox_native_valid_stale_and_wrong_symbol(native_bin, 
         inbox.mkdir(mode=0o700)
         port = port_for_test()
         env = env_for(home, port)
-        env["FINCEPT_READONLY_HISTORY_INGRESS_ACK"] = ("MULTI_YAHOO_HISTORY_SNAPSHOT_V1" if multi_asset else "SPY_YAHOO_HISTORY_SNAPSHOT_V1")
+        env["FINCEPT_READONLY_HISTORY_INGRESS_ACK"] = {"single": "SPY_YAHOO_HISTORY_SNAPSHOT_V1", "multi": "MULTI_YAHOO_HISTORY_SNAPSHOT_V1", "dual": "DUAL_WINDOW_YAHOO_HISTORY_SNAPSHOT_V1"}[mode]
         now = int(time.time())
         # Synthetic fixture only: not a market quote or completed trading session.
         bars = [{"timestamp": now - 86400, "open": 100, "high": 104,
                  "low": 99, "close": 102, "volume": 500}]
-        def publish(rows=bars, captured=now, tamper=False, symbol="SPY", declared_symbol=None):
-            target = inbox if symbol == "SPY" else inbox / symbol
+        def publish(rows=bars, captured=now, tamper=False, symbol="SPY", declared_symbol=None, period="5d", declared_period=None):
+            target = inbox / ("long-" + symbol) if period == "6mo" else (inbox if symbol == "SPY" else inbox / symbol)
             target.mkdir(mode=0o700, exist_ok=True)
             raw = json.dumps(rows, separators=(",", ":")).encode()
             obj = {"schema": "YAHOO_HISTORY_SNAPSHOT_V1",
                    "provider": "Yahoo Finance via original yfinance",
-                   "symbol": declared_symbol or symbol, "period": "5d", "interval": "1d",
+                   "symbol": declared_symbol or symbol, "period": declared_period or period, "interval": "1d",
                    "adjustment": "AUTO_ADJUST_TRUE_BACK_ADJUST_FALSE",
                    "captured_at_unix": captured,
                    "bars_base64": base64.b64encode(raw).decode(),
@@ -594,7 +596,7 @@ def test_original_history_inbox_native_valid_stale_and_wrong_symbol(native_bin, 
         def history(symbol="SPY", period="5d"):
             code, body = request(port, "POST", rpc("tools/call", 9,
                 {"name": "get_history", "arguments": {"symbol": symbol,
-                    "period": period, "interval": "1d", "limit": 5}}), bearer)
+                    "period": period, "interval": "1d", "limit": 160 if period == "6mo" else 5}}), bearer)
             assert code == 200
             return body["result"]
         cmd = [native_bin, "--serve-readonly-news"]
@@ -646,6 +648,31 @@ def test_original_history_inbox_native_valid_stale_and_wrong_symbol(native_bin, 
                     (inbox / "EURUSD=X").symlink_to(inbox, target_is_directory=True)
                     assert history("EURUSD=X")["isError"]
                 assert history("../SPY")["isError"] and history("ZZZ")["isError"]
+                long_bars = [{"timestamp": now-(120-i)*129600, "open": 100, "high": 104,
+                              "low": 99, "close": 102, "volume": 0} for i in range(120)]
+                for symbol in ("SPY", "EURUSD=X"):
+                    assert history(symbol, "6mo")["isError"]
+                    publish(rows=long_bars, symbol=symbol, period="6mo")
+                    result = history(symbol, "6mo")
+                    if long_window:
+                        assert result["isError"] is False
+                        data = result["structuredContent"]
+                        assert data["symbol"] == symbol and data["period"] == "6mo" and data["count"] == 120
+                        assert data["bars"][0]["timestamp"] == long_bars[0]["timestamp"]
+                    else:
+                        assert result["isError"]
+                if long_window:
+                    for kwargs in ({"rows":long_bars[:99]}, {"captured":now-86401},
+                                   {"tamper":True}, {"declared_symbol":"EURUSD=X"}, {"declared_period":"5d"}):
+                        publish(**({"rows":long_bars,"period":"6mo"} | kwargs))
+                        assert history("SPY", "6mo")["isError"]
+                    publish(rows=long_bars, symbol="AAPL", period="6mo")
+                    assert history("AAPL", "6mo")["isError"]
+                    assert history()["isError"] is False
+                    publish(rows=long_bars, period="6mo")
+                    assert history("SPY","6mo")["isError"] is False
+                    (inbox / "long-SPY" / "snapshot.json").chmod(0o644)
+                    assert history("SPY","6mo")["isError"]
                 publish(tamper=True)
                 assert history()["isError"]
                 publish(captured=now-901)
@@ -752,3 +779,25 @@ def test_six_month_capture_requires_depth_and_explicit_ack(symbol, tmp_path, mon
     with pytest.raises(ValueError, match="explicit opt-in"):
         capture.capture(tmp_path, symbol, "6mo")
     assert not list(tmp_path.iterdir())
+
+def test_six_month_capture_actual_publish_with_mocked_original_adapter(tmp_path, monkeypatch):
+    import types
+    capture = _history_capture_module()
+    tmp_path.chmod(0o700)
+    target = tmp_path / "long-SPY"
+    target.mkdir(mode=0o700)
+    now = int(time.time())
+    bars = [{"timestamp": now-(120-i)*129600,"open":100,"high":104,
+             "low":99,"close":102,"volume":0} for i in range(120)]
+    calls = []
+    def fetch(*args):
+        calls.append(args)
+        return bars
+    monkeypatch.setitem(sys.modules, "yfinance_data", types.SimpleNamespace(get_historical_period=fetch))
+    monkeypatch.setenv("FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK", capture.DUAL_ACK)
+    capture.capture(tmp_path, "SPY", "6mo")
+    assert calls == [("SPY", "6mo", "1d")]
+    actual = json.loads((target / "snapshot.json").read_text())
+    assert actual["symbol"] == "SPY" and actual["period"] == "6mo"
+    assert (target / "snapshot.json").stat().st_mode & 0o777 == 0o600
+    assert not (tmp_path / "snapshot.json").exists()

@@ -229,6 +229,13 @@ void NewsService::fetch_all_news(bool force, ArticlesCallback cb) {
         }
     }
 
+    // F2 isolated headless service: cache-only, no provider call even if a
+    // short-lived cache expires between the MCP dispatcher and this method.
+    if (cache_only_mode_.load()) {
+        cb(false, {});
+        return;
+    }
+
     auto feeds = list_effective_feeds();
     feed_count_ = feeds.size();
 

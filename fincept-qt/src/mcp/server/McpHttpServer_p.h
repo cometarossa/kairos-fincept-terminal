@@ -236,6 +236,12 @@ struct McpHttpServer::Impl {
     quint16 test_port = 0;
     QString test_token;
 
+    // Explicit opt-in original F2 service; never saved into UI settings.
+    // This is deliberately separate from the finite self-test override.
+    bool readonly_news_service_mode = false;
+    quint16 readonly_news_service_port = 0;
+    QString readonly_news_service_token;
+
     // Client identification — the server is stateless, so remember who said hello.
     QHash<QByteArray, QString> client_by_agent; // User-Agent → clientInfo.name
     QHash<QString, QString> distinct_clients;   // "name|user-agent" → name, since start()

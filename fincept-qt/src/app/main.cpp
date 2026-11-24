@@ -2,6 +2,7 @@
 #include "algo_engine/ScanMonitor.h"
 #include "algo_engine/UniverseScanSelftest.h"
 #include "algo_engine/fno/FnoAlgoSelftest.h"
+#include "app/ReadonlyNewsMcpService.h"
 #include "app/InstanceLock.h"
 #include "app/MonitorPickerDialog.h"
 #include "app/ScreenSmokeTest.h"
@@ -222,6 +223,14 @@ int main(int argc, char* argv[]) {
     // setActiveBackend() after the fact does not always take effect because
     // singleton factories may already be bound.
     qputenv("QT_TLS_BACKEND", "openssl");
+
+    // Isolated original F2 read-only research service. Bypass normal GUI,
+    // TerminalShell, broker auth, external MCP auto-start and all UI tasks.
+    for (int i = 1; i < argc; ++i) {
+        if (qstrcmp(argv[i], "--serve-readonly-news") == 0)
+            return fincept::app::run_readonly_news_mcp_service(argc, argv);
+    }
+
 
 #ifdef Q_OS_MACOS
     // Pre-load OpenSSL from Homebrew so the openssl plugin's runtime dlopen

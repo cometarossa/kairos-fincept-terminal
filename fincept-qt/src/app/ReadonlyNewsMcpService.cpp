@@ -10,6 +10,8 @@
 #include "mcp/McpProvider.h"
 #include "mcp/server/McpHttpServer.h"
 #include "mcp/tools/NewsTools.h"
+#include "mcp/tools/MarketsTools.h"
+#include "services/markets/MarketDataService.h"
 #include "services/news/NewsService.h"
 #include "storage/cache/CacheManager.h"
 #include "storage/sqlite/CacheDatabase.h"
@@ -349,6 +351,47 @@ int run_readonly_news_mcp_service(int argc, char* argv[]) {
         return 1;
     }
 
+    // Explicit second allowlisted original read-only tool. Default news-only
+    // catalogue above remains unchanged without this separate opt-in.
+    const auto history_ack = qgetenv("FINCEPT_READONLY_HISTORY_INGRESS_ACK");
+    std::size_t expected_tools = 1;
+    if (!history_ack.isEmpty()) {
+        const QString directory = home + QLatin1String("/history-ingress");
+        if (history_ack != "SPY_YAHOO_HISTORY_SNAPSHOT_V1" ||
+            !private_service_home(directory, ::geteuid()) ||
+            !fincept::services::MarketDataService::instance().configure_readonly_history_inbox(directory)) {
+            diagnostic("FINCEPT_F2_DENIED_HISTORY_CONFIGURATION");
+            fincept::mcp::McpProvider::instance().clear();
+            fincept::CacheDatabase::instance().close();
+            return 2;
+        }
+        bool history_registered = false;
+        for (auto& tool : fincept::mcp::tools::get_markets_tools()) {
+            if (tool.name != QLatin1String("get_history"))
+                continue;
+            if (history_registered || tool.is_destructive ||
+                tool.auth_required != fincept::mcp::AuthLevel::None || !tool.handler)
+                break;
+            auto original = std::move(tool.handler);
+            tool.handler = [original](const QJsonObject& args) -> fincept::mcp::ToolResult {
+                if (args.value("symbol").toString() != QLatin1String("SPY") ||
+                    args.value("period").toString() != QLatin1String("5d") ||
+                    args.value("interval").toString() != QLatin1String("1d"))
+                    return fincept::mcp::ToolResult::fail(QStringLiteral("FINCEPT_UNAVAILABLE"));
+                return original(args);
+            };
+            fincept::mcp::McpProvider::instance().register_tool(std::move(tool));
+            history_registered = true;
+        }
+        expected_tools = 2;
+        if (!history_registered || fincept::mcp::McpProvider::instance().tool_count() != expected_tools) {
+            diagnostic("FINCEPT_F2_DENIED_HISTORY_TOOL_CATALOGUE_DRIFT");
+            fincept::mcp::McpProvider::instance().clear();
+            fincept::CacheDatabase::instance().close();
+            return 1;
+        }
+    }
+
     auto& server = fincept::mcp::McpHttpServer::instance();
     if (!server.configure_readonly_news_service(static_cast<quint16>(port), token) ||
         !server.start() || server.allow_actions() ||
@@ -371,8 +414,8 @@ int run_readonly_news_mcp_service(int argc, char* argv[]) {
             app.quit();
     });
     stop_poll.start();
-    std::printf("FINCEPT_F2_READONLY_NEWS_READY port=%u tools=1 actions=false provider_egress=false\n",
-                static_cast<unsigned>(server.port()));
+    std::printf("FINCEPT_F2_READONLY_NEWS_READY port=%u tools=%zu actions=false provider_egress=false\n",
+                static_cast<unsigned>(server.port()), expected_tools);
     std::fflush(stdout);
     const int rc = app.exec();
     stop_poll.stop();

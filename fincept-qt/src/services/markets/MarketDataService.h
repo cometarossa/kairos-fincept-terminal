@@ -124,6 +124,10 @@ class MarketDataService : public QObject, public fincept::datahub::Producer {
     using HistoryCallback = std::function<void(bool, QVector<HistoryPoint>)>;
     void fetch_history(const QString& symbol, const QString& period, const QString& interval, HistoryCallback cb);
 
+    // Dedicated original headless service only. Once enabled, history never
+    // falls back to Python or a provider. A missing/invalid inbox fails closed.
+    bool configure_readonly_history_inbox(const QString& directory);
+
     /// Fetch 5-day hourly sparkline data for multiple symbols in one Python call.
     /// Callback: map of symbol -> list of close prices (chronological).
     /// Phase 3+: prefer `DataHub::subscribe(this, "market:sparkline:<sym>", ...)` for live tables.
@@ -171,6 +175,7 @@ class MarketDataService : public QObject, public fincept::datahub::Producer {
         QVector<HistoryPoint> bars;
     };
     std::optional<HistorySelftestFixture> history_selftest_fixture_;
+    QString readonly_history_inbox_;
 
     MarketDataService();
     void flush_batch();

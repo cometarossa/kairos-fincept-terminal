@@ -476,3 +476,73 @@ def test_actual_native_inbox_fresh_tamper_replay_and_absolute_expiry(native_bin)
         with socket.socket() as probe:
             probe.settimeout(1)
             assert probe.connect_ex(("127.0.0.1", port)) != 0
+
+
+def _capture_module():
+    import importlib.util
+    path = ROOT.parents[1] / "scripts" / "capture_public_cnbc_rss_f2_v1.py"
+    spec = importlib.util.spec_from_file_location("f2_capture", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _capture_xml(captured, url="https://www.cnbc.com/qa-synthetic.html"):
+    from email.utils import formatdate
+    return (f'<rss version="2.0"><channel><item><title>Synthetic QA</title>'
+            f'<link>{url}</link><pubDate>{formatdate(captured, usegmt=True)}</pubDate>'
+            f'</item></channel></rss>').encode()
+
+
+def test_capture_producer_atomic_envelope_and_no_replay(tmp_path):
+    import base64
+    import hashlib
+    import stat
+    capture = _capture_module()
+    directory = tmp_path / "inbox"
+    directory.mkdir(mode=0o700)
+    if os.geteuid() == 0:
+        pytest.skip("producer must run as a non-root user")
+    now = int(time.time())
+    raw = _capture_xml(now)
+    snapshot = capture.build_snapshot(raw, now)
+    assert snapshot["rss_sha256"] == hashlib.sha256(raw).hexdigest()
+    assert base64.b64decode(snapshot["rss_base64"], validate=True) == raw
+    capture.publish(directory, snapshot)
+    target = directory / "snapshot.json"
+    assert stat.S_IMODE(target.stat().st_mode) == 0o600
+    assert json.loads(target.read_bytes()) == snapshot
+    with pytest.raises(ValueError):
+        capture.publish(directory, snapshot)
+    assert json.loads(target.read_bytes()) == snapshot
+    later = capture.build_snapshot(_capture_xml(now + 1), now + 1)
+    capture.publish(directory, later)
+    assert json.loads(target.read_bytes()) == later
+    assert list(directory.iterdir()) == [target]
+
+
+@pytest.mark.parametrize("case", ["old", "wrong_host", "doctype", "oversized", "empty"])
+def test_capture_producer_refuses_unsafe_or_ineligible_xml(case):
+    capture = _capture_module()
+    now = int(time.time())
+    raw = {"old": _capture_xml(now - 172800),
+           "wrong_host": _capture_xml(now, "https://example.org/qa"),
+           "doctype": b'<!DOCTYPE rss [<!ENTITY x "bad">]>' + _capture_xml(now),
+           "oversized": b"x" * 180001, "empty": b""}[case]
+    with pytest.raises(ValueError):
+        capture.build_snapshot(raw, now)
+
+
+def test_capture_producer_preserves_previous_on_unsafe_destination(tmp_path):
+    capture = _capture_module()
+    if os.geteuid() == 0:
+        pytest.skip("producer must run as a non-root user")
+    directory = tmp_path / "inbox"
+    directory.mkdir(mode=0o700)
+    target = directory / "snapshot.json"
+    target.write_text("[]")
+    target.chmod(0o600)
+    now = int(time.time())
+    with pytest.raises(ValueError):
+        capture.publish(directory, capture.build_snapshot(_capture_xml(now), now))
+    assert target.read_text() == "[]"

@@ -642,3 +642,53 @@ def test_original_history_inbox_native_valid_stale_and_wrong_symbol(native_bin):
         receipt = output.read_text(errors="replace")
         assert child.returncode == 0 and "FINCEPT_F2_READONLY_NEWS_STOPPED" in receipt
         assert bearer not in receipt
+
+
+def _history_capture_module():
+    import importlib.util
+    scripts = ROOT.parents[1] / "scripts"
+    spec = importlib.util.spec_from_file_location("f2_history_capture", scripts / "capture_public_yahoo_history_f2_v1.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.path.insert(0, str(scripts))
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.path.remove(str(scripts))
+    return module
+
+
+def test_history_capture_integrity_and_original_adjustment_contract():
+    import base64
+    import hashlib
+    capture = _history_capture_module()
+    now = int(time.time())
+    bars = [{"timestamp": now-86400, "open": 100, "high": 104,
+             "low": 99, "close": 102, "volume": 500}]
+    snapshot = capture.build_snapshot(bars, now)
+    raw = base64.b64decode(snapshot["bars_base64"], validate=True)
+    assert json.loads(raw) == bars
+    assert hashlib.sha256(raw).hexdigest() == snapshot["bars_sha256"]
+    assert snapshot["adjustment"] == "AUTO_ADJUST_TRUE_BACK_ADJUST_FALSE"
+    assert snapshot["symbol"] == "SPY"
+
+
+@pytest.mark.parametrize("case", ["missing", "nan", "bool", "volume", "ohlc", "future", "stale", "duplicate", "empty"])
+def test_history_capture_rejects_invalid_series(case):
+    capture = _history_capture_module()
+    now = int(time.time())
+    bar = {"timestamp": now-86400, "open": 100, "high": 104, "low": 99, "close": 102, "volume": 500}
+    cases = {"missing": [{k:v for k,v in bar.items() if k != "volume"}],
+             "nan": [dict(bar, close=float("nan"))], "bool": [dict(bar, open=True)],
+             "volume": [dict(bar, volume=0.5)], "ohlc": [dict(bar, high=99)],
+             "future": [dict(bar, timestamp=now+1)], "stale": [dict(bar,timestamp=now-8*86400)],
+             "duplicate": [bar,bar], "empty": []}
+    with pytest.raises(ValueError):
+        capture.build_snapshot(cases[case], now)
+
+
+def test_history_capture_no_opt_in_never_imports_provider(tmp_path, monkeypatch):
+    capture = _history_capture_module()
+    monkeypatch.delenv("FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK", raising=False)
+    with pytest.raises(ValueError, match="explicit opt-in"):
+        capture.capture(tmp_path)
+    assert not list(tmp_path.iterdir())

@@ -546,3 +546,99 @@ def test_capture_producer_preserves_previous_on_unsafe_destination(tmp_path):
     with pytest.raises(ValueError):
         capture.publish(directory, capture.build_snapshot(_capture_xml(now), now))
     assert target.read_text() == "[]"
+
+
+def test_history_inbox_is_explicit_and_original_decoder_only():
+    markets = (ROOT / "services" / "markets" / "MarketDataService.cpp").read_text()
+    assert 'FINCEPT_READONLY_HISTORY_INGRESS_ACK' in SOURCE
+    assert 'tool.name != QLatin1String("get_history")' in SOURCE
+    assert 'configure_readonly_history_inbox(directory)' in SOURCE
+    assert 'history_integrity::decode(QJsonDocument::fromJson(bars), now)' in markets
+    start = markets.index("void MarketDataService::fetch_history(")
+    end = markets.index("QStringList args;", start)
+    assert "read_history_inbox(readonly_history_inbox_)" in markets[start:end]
+    assert "return; // No PythonRunner fallback" in markets[start:end]
+
+
+def test_original_history_inbox_native_valid_stale_and_wrong_symbol(native_bin):
+    import base64
+    import hashlib
+    with tempfile.TemporaryDirectory(prefix="fincept-f2-history-", dir="/private/tmp" if sys.platform == "darwin" else None) as name:
+        home = Path(name)
+        bearer = private_profile(home)
+        inbox = home / "history-ingress"
+        inbox.mkdir(mode=0o700)
+        port = port_for_test()
+        env = env_for(home, port)
+        env["FINCEPT_READONLY_HISTORY_INGRESS_ACK"] = "SPY_YAHOO_HISTORY_SNAPSHOT_V1"
+        now = int(time.time())
+        # Synthetic fixture only: not a market quote or completed trading session.
+        bars = [{"timestamp": now - 86400, "open": 100, "high": 104,
+                 "low": 99, "close": 102, "volume": 500}]
+        def publish(rows=bars, captured=now, tamper=False):
+            raw = json.dumps(rows, separators=(",", ":")).encode()
+            obj = {"schema": "YAHOO_HISTORY_SNAPSHOT_V1",
+                   "provider": "Yahoo Finance via original yfinance",
+                   "symbol": "SPY", "period": "5d", "interval": "1d",
+                   "adjustment": "AUTO_ADJUST_TRUE_BACK_ADJUST_FALSE",
+                   "captured_at_unix": captured,
+                   "bars_base64": base64.b64encode(raw).decode(),
+                   "bars_sha256": "0"*64 if tamper else hashlib.sha256(raw).hexdigest()}
+            tmp = inbox / ".next"
+            with tmp.open("x") as f: json.dump(obj, f)
+            tmp.chmod(0o600)
+            tmp.replace(inbox / "snapshot.json")
+        def history(symbol="SPY", period="5d"):
+            code, body = request(port, "POST", rpc("tools/call", 9,
+                {"name": "get_history", "arguments": {"symbol": symbol,
+                    "period": period, "interval": "1d", "limit": 5}}), bearer)
+            assert code == 200
+            return body["result"]
+        cmd = [native_bin, "--serve-readonly-news"]
+        if sys.platform == "darwin" and os.environ.get("FINCEPT_F2_MAC_SANDBOX_EGRESS_DENIED") == "1":
+            policy = '(version 1) (allow default) (deny network-outbound (remote ip "*:*")) (allow network-outbound (remote ip "localhost:*"))'
+            cmd = ["/usr/bin/sandbox-exec", "-p", policy, *cmd]
+        output = home / "history.log"
+        with output.open("w+") as log:
+            child = subprocess.Popen(cmd, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                     start_new_session=True)
+            try:
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    assert child.poll() is None
+                    try:
+                        if request(port, "GET")[0] == 200: break
+                    except (OSError, TimeoutError, http.client.HTTPException): pass
+                    time.sleep(.1)
+                else: pytest.fail("history service not ready")
+                code, body = request(port, "POST", rpc("tools/list"), bearer)
+                assert code == 200
+                assert {t["name"] for t in body["result"]["tools"]} == {"get_news", "get_history"}
+                assert history()["isError"]
+                publish()
+                result = history()
+                assert result["isError"] is False
+                data = result["structuredContent"]
+                assert data["symbol"] == "SPY" and data["count"] == 1
+                assert data["bars"][0]["close"] == 102
+                assert history("AAPL")["isError"] and history(period="1mo")["isError"]
+                publish(tamper=True)
+                assert history()["isError"]
+                publish(captured=now-901)
+                assert history()["isError"]
+                publish(rows=[dict(bars[0], low=110)])
+                assert history()["isError"]
+                publish()
+                assert history()["isError"] is False
+                (inbox / "snapshot.json").chmod(0o644)
+                assert history()["isError"]
+            finally:
+                if child.poll() is None:
+                    child.send_signal(signal.SIGTERM)
+                    try: child.wait(timeout=8)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(child.pid, signal.SIGKILL)
+                        child.wait(timeout=4)
+        receipt = output.read_text(errors="replace")
+        assert child.returncode == 0 and "FINCEPT_F2_READONLY_NEWS_STOPPED" in receipt
+        assert bearer not in receipt

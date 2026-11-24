@@ -17,6 +17,14 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QPointer>
+#include <QDir>
+#include <QFile>
+#include <QCryptographicHash>
+#if defined(Q_OS_UNIX)
+#include <fcntl.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 #include <QSet>
 
 #include <memory>
@@ -47,6 +55,69 @@ void store_quote_in_cache(const QuoteData& quote, int ttl_seconds) {
         "market:" + quote.symbol,
         QVariant(QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact))),
         ttl_seconds, "market_data");
+}
+
+// Exact bounded first market-data vertical: SPY 5d/1d, adjusted OHLC.
+// The local capture clock is not an exchange as-of or a completed-bar claim.
+std::optional<QVector<HistoryPoint>> read_history_inbox(const QString& directory) {
+#if !defined(Q_OS_UNIX)
+    Q_UNUSED(directory);
+    return std::nullopt;
+#else
+    const QByteArray dir = QFile::encodeName(directory);
+    const int dirfd = ::open(dir.constData(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+    if (dirfd < 0)
+        return std::nullopt;
+    struct stat ds {};
+    if (::fstat(dirfd, &ds) != 0 || !S_ISDIR(ds.st_mode) ||
+        ds.st_uid != ::geteuid() || (ds.st_mode & 0777) != 0700) {
+        ::close(dirfd);
+        return std::nullopt;
+    }
+    const int fd = ::openat(dirfd, "snapshot.json", O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
+    ::close(dirfd);
+    if (fd < 0)
+        return std::nullopt;
+    struct stat st {};
+    if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) ||
+        st.st_uid != ::geteuid() || (st.st_mode & 0777) != 0600 ||
+        st.st_nlink != 1 || st.st_size <= 0 || st.st_size > 32768) {
+        ::close(fd);
+        return std::nullopt;
+    }
+    QFile file;
+    if (!file.open(fd, QIODevice::ReadOnly, QFileDevice::AutoCloseHandle)) {
+        ::close(fd);
+        return std::nullopt;
+    }
+    const QByteArray raw = file.read(32769);
+    QJsonParseError error;
+    const auto envelope = QJsonDocument::fromJson(raw, &error);
+    if (raw.size() > 32768 || error.error != QJsonParseError::NoError || !envelope.isObject())
+        return std::nullopt;
+    const auto obj = envelope.object();
+    const qint64 now = QDateTime::currentSecsSinceEpoch();
+    const qint64 captured = obj.value("captured_at_unix").toInteger(-1);
+    const QByteArray encoded = obj.value("bars_base64").toString().toLatin1();
+    const QByteArray bars = QByteArray::fromBase64(encoded);
+    if (obj.size() != 9 ||
+        obj.value("schema").toString() != QLatin1String("YAHOO_HISTORY_SNAPSHOT_V1") ||
+        obj.value("provider").toString() != QLatin1String("Yahoo Finance via original yfinance") ||
+        obj.value("symbol").toString() != QLatin1String("SPY") ||
+        obj.value("period").toString() != QLatin1String("5d") ||
+        obj.value("interval").toString() != QLatin1String("1d") ||
+        obj.value("adjustment").toString() != QLatin1String("AUTO_ADJUST_TRUE_BACK_ADJUST_FALSE") ||
+        captured <= 0 || captured > now || captured <= now - 900 ||
+        bars.isEmpty() || bars.size() > 16384 || bars.toBase64() != encoded ||
+        obj.value("bars_sha256").toString().toLatin1() != QCryptographicHash::hash(bars, QCryptographicHash::Sha256).toHex())
+        return std::nullopt;
+    const auto decoded = history_integrity::decode(QJsonDocument::fromJson(bars), now);
+    if (!decoded || decoded->size() > 5 || decoded->first().timestamp < captured - 14 * 86400 ||
+        decoded->last().timestamp > captured ||
+        decoded->last().timestamp < captured - 7 * 86400)
+        return std::nullopt;
+    return decoded;
+#endif
 }
 
 } // namespace
@@ -621,8 +692,26 @@ void MarketDataService::fetch_info(const QString& symbol, InfoCallback cb) {
 
 // ── History fetch (OHLCV) ────────────────────────────────────────────────────
 
+bool MarketDataService::configure_readonly_history_inbox(const QString& directory) {
+    if (!readonly_history_inbox_.isEmpty() || !QCoreApplication::instance() ||
+        QCoreApplication::applicationName() != QLatin1String("FinceptReadonlyNews") ||
+        !QCoreApplication::arguments().contains(QStringLiteral("--serve-readonly-news")) ||
+        qgetenv("FINCEPT_READONLY_HISTORY_INGRESS_ACK") != "SPY_YAHOO_HISTORY_SNAPSHOT_V1" ||
+        !QDir::isAbsolutePath(directory) || QDir(directory).canonicalPath() != directory)
+        return false;
+    readonly_history_inbox_ = directory;
+    return true;
+}
+
 void MarketDataService::fetch_history(const QString& symbol, const QString& period, const QString& interval,
                                       HistoryCallback cb) {
+    if (!readonly_history_inbox_.isEmpty()) {
+        const auto points = symbol == QLatin1String("SPY") && period == QLatin1String("5d") &&
+                            interval == QLatin1String("1d")
+            ? read_history_inbox(readonly_history_inbox_) : std::nullopt;
+        cb(points.has_value(), points.value_or(QVector<HistoryPoint>{}));
+        return; // No PythonRunner fallback, including failure and wrong window.
+    }
     // Native selftest-only fixture, armed exclusively by the friend entrypoint.
     // While armed, even a WRONG symbol/window fails closed without calling
     // PythonRunner: no hidden provider fallback on malformed synthetic input.

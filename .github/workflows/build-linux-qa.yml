@@ -418,7 +418,8 @@ jobs:
           --env FINCEPT_F2_NATIVE_BIN=/work/repo/fincept-qt/dist/FinceptTerminal-Linux-x86_64.AppImage \
           fincept-original-f2-readonly-qa:ci \
           /usr/bin/python3 -m pytest -q -p no:cacheprovider \
-          tests/fincept_original/test_headless_readonly_news_service_f2_v1.py
+          tests/fincept_original/test_headless_readonly_news_service_f2_v1.py \
+          tests/fincept_original/test_two_year_yahoo_archive_v1.py
         echo "FINCEPT_ORIGINAL_LINUX_F2_NEWS_READONLY_LIFECYCLE_PASS broker_calls=0 external_egress=false"
 
     - name: Upload artifact

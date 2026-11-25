@@ -50,7 +50,7 @@ class HourlyArchiveTests(unittest.TestCase):
         encoded = archive.build_archive(rows(), NOW)
         with self.assertRaises(ValueError):
             archive.inspect_archive(encoded, "0"*64)
-        for key, value in (("execution_authority", True), ("broker_calls", 1), ("rows", 5000)):
+        for key, value in (("execution_authority", True), ("broker_calls", 1), ("rows", 5000), ("price_precision", "ROUNDED")):
             env = json.loads(encoded)
             env[key] = value
             altered = archive._canonical(env)
@@ -79,7 +79,7 @@ class HourlyArchiveTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "ARCHIVE_ALREADY_EXISTS"):
                     archive.capture(root)
                 self.assertEqual((root / archive.FILENAME).read_bytes(), before)
-            self.assertEqual(calls, [(("EURUSD=X", "1y", "1h"), {"strict_research": True})])
+            self.assertEqual(calls, [(("EURUSD=X", "1y", "1h"), {"strict_research": True, "preserve_research_precision": True})])
 
     def test_failed_provider_leaves_no_archive(self):
         with tempfile.TemporaryDirectory() as folder:

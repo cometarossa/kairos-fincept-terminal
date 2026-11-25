@@ -116,6 +116,39 @@ class OriginalProviderHistoryConversion(unittest.TestCase):
         self.assertEqual(period_result[0]["close"], 102.0)
         self.assertEqual(date_result[0]["close"], 102.0)
 
+    def test_research_rejects_before_rounding_can_mask_invalid_bar(self):
+        idx = pd.DatetimeIndex(["2024-01-02", "2024-01-03"], tz="UTC")
+        frame = pd.DataFrame({"Open": [1.10001, 1.10], "High": [1.12, 1.12],
+                              "Low": [1.10002, 1.09], "Close": [1.11, 1.11],
+                              "Volume": [0, 0]}, index=idx)
+        with patch.object(self.module.yf, "Ticker",
+                          return_value=types.SimpleNamespace(history=lambda **_: frame)):
+            legacy = self.module.get_historical_period("EURUSD=X", "6mo", "1d")
+            self.assertEqual(legacy[0]["open"], legacy[0]["low"])
+            strict = self.module.get_historical_period("EURUSD=X", "6mo", "1d", strict_research=True)
+        self.assertEqual(strict, {"error": "RESEARCH_RAW_INVALID_BAR"})
+
+    def test_research_valid_rows_preserve_existing_conversion(self):
+        idx = pd.DatetimeIndex(["2024-01-02"], tz="UTC")
+        frame = pd.DataFrame({"Open": [1.10002], "High": [1.12], "Low": [1.10],
+                              "Close": [1.11], "Volume": [0]}, index=idx)
+        with patch.object(self.module.yf, "Ticker",
+                          return_value=types.SimpleNamespace(history=lambda **_: frame)):
+            self.assertEqual(self.module.get_historical_period("EURUSD=X", "5d", "1d", strict_research=True),
+                             self.module.get_historical_period("EURUSD=X", "5d", "1d"))
+
+    def test_research_rejects_missing_and_fractional_provider_values(self):
+        idx = pd.DatetimeIndex(["2024-01-02"], tz="UTC")
+        for field, value in (("Volume", 0.5), ("Volume", float("nan")), ("Close", float("inf")),
+                             ("High", 0), ("Low", 2), ("Open", float("nan"))):
+            fields = {"Open": [1.1], "High": [1.2], "Low": [1.0], "Close": [1.15], "Volume": [0]}
+            fields[field] = [value]
+            frame = pd.DataFrame(fields, index=idx)
+            with self.subTest(field=field, value=value), patch.object(
+                    self.module.yf, "Ticker", return_value=types.SimpleNamespace(history=lambda **_: frame)):
+                self.assertEqual(self.module.get_historical_period("SPY", "5d", "1d", strict_research=True),
+                                 {"error": "RESEARCH_RAW_INVALID_BAR"})
+
     def test_provider_error_is_not_price_data(self):
         def raises(**_):
             raise RuntimeError("Provider unavailable")

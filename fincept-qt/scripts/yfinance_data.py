@@ -1171,8 +1171,10 @@ def _research_raw_bar_valid(row):
         return False
 
 
-def get_historical_period(symbol, period='6mo', interval='1d', *, strict_research=False):
+def get_historical_period(symbol, period='6mo', interval='1d', *, strict_research=False, preserve_research_precision=False):
     """Fetch historical data using a period string (e.g., '1mo', '6mo', '1y', '5y')"""
+    if preserve_research_precision is True and strict_research is not True:
+        return {"error": "RESEARCH_PRECISION_REQUIRES_STRICT"}
     try:
         import io, contextlib
         if _public_yahoo_history_qa_enabled(symbol, period, interval):
@@ -1209,12 +1211,13 @@ def get_historical_period(symbol, period='6mo', interval='1d', *, strict_researc
             # Keep NaN/missing closes as explicit null: dropping the bar would
             # make a gapped series look complete. The Qt integrity decoder
             # will reject the WHOLE untrustworthy result, not quietly skip it.
-            close = _num(row['Close'])
+            price = float if preserve_research_precision is True else _num
+            close = price(row['Close'])
             historical_data.append({
                 "timestamp": int(index.timestamp()),
-                "open": _num(row['Open']),
-                "high": _num(row['High']),
-                "low": _num(row['Low']),
+                "open": price(row['Open']),
+                "high": price(row['High']),
+                "low": price(row['Low']),
                 "close": close,
                 "volume": _int(row['Volume'])  # missing volume stays unknown, not invented zero
             })

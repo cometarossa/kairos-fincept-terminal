@@ -149,6 +149,25 @@ class OriginalProviderHistoryConversion(unittest.TestCase):
                 self.assertEqual(self.module.get_historical_period("SPY", "5d", "1d", strict_research=True),
                                  {"error": "RESEARCH_RAW_INVALID_BAR"})
 
+    def test_opt_in_precision_preserves_valid_raw_prices_only_in_strict_mode(self):
+        idx = pd.DatetimeIndex(["2024-01-02"], tz="UTC")
+        frame = pd.DataFrame({"Open": [1.08001], "High": [1.08004],
+                              "Low": [1.07999], "Close": [1.08002], "Volume": [0]}, index=idx)
+        with patch.object(self.module.yf, "Ticker",
+                          return_value=types.SimpleNamespace(history=lambda **_: frame)) as ticker:
+            legacy = self.module.get_historical_period("EURUSD=X", "1y", "1h", strict_research=True)
+            precise = self.module.get_historical_period("EURUSD=X", "1y", "1h", strict_research=True, preserve_research_precision=True)
+            self.assertEqual(legacy[0]["close"], 1.08)
+            for key in ("open", "high", "low", "close"):
+                self.assertEqual(precise[0][key], float(frame.iloc[0][key.capitalize()]))
+            before = ticker.call_count
+            self.assertEqual(self.module.get_historical_period("EURUSD=X", "1y", "1h", preserve_research_precision=True),
+                             {"error": "RESEARCH_PRECISION_REQUIRES_STRICT"})
+            self.assertEqual(ticker.call_count, before)
+            frame.loc[idx[0], "Low"] = 1.09
+            self.assertEqual(self.module.get_historical_period("EURUSD=X", "1y", "1h", strict_research=True, preserve_research_precision=True),
+                             {"error": "RESEARCH_RAW_INVALID_BAR"})
+
     def test_provider_error_is_not_price_data(self):
         def raises(**_):
             raise RuntimeError("Provider unavailable")

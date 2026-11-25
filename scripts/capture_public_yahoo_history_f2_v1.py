@@ -29,37 +29,64 @@ LONG_SYMBOLS = frozenset({"SPY", "EURUSD=X"})
 ALLOWED_SYMBOLS = frozenset(["SPY","EURUSD=X","GBPUSD=X","JPY=X","AUDUSD=X","CAD=X","^GSPC","^NDX","^GDAXI","AAPL","BTC-USD","GC=F"])
 FIELDS = {"timestamp", "open", "high", "low", "close", "volume"}
 
+# Only fixed codes cross the diagnostic boundary. Never emit an exception
+# message originating in the adapter, provider, filesystem, or input data.
+REASONS = frozenset({
+    "WINDOW_DENIED", "SYMBOL_DENIED", "OPT_IN_REQUIRED", "UNSAFE_DIRECTORY",
+    "LOCK_UNAVAILABLE", "ADAPTER_UNAVAILABLE", "EMPTY_HISTORY",
+    "INVALID_COUNT", "INVALID_TIMESTAMP", "INVALID_BAR", "INVALID_NUMBER",
+    "RAW_INVALID_BAR",
+    "INVALID_OHLC", "INVALID_VOLUME", "INSUFFICIENT_SPAN", "STALE_HISTORY",
+    "OVERSIZED_BARS", "PUBLICATION_REJECTED", "INTERNAL_FAILURE",
+})
+
+
+class CaptureRejected(ValueError):
+    def __init__(self, reason: str, message: str):
+        super().__init__(message)
+        self.reason = reason
+
+
+def failure_reason(exc: Exception) -> str:
+    if type(exc) is CaptureRejected and type(exc.reason) is str and exc.reason in REASONS:
+        return exc.reason
+    return "INTERNAL_FAILURE"
+
 
 def build_snapshot(rows, captured: int, symbol: str = "SPY", period: str = "5d") -> dict:
     long_window = period == "6mo"
     if period not in ("5d", "6mo") or (long_window and symbol not in LONG_SYMBOLS):
-        raise ValueError("window denied")
+        raise CaptureRejected("WINDOW_DENIED", "window denied")
     if type(symbol) is not str or symbol not in ALLOWED_SYMBOLS:
-        raise ValueError("symbol denied")
-    if type(captured) is not int or captured <= 0 or type(rows) is not list or not (100 if long_window else 1) <= len(rows) <= (160 if long_window else 5):
-        raise ValueError("invalid history")
+        raise CaptureRejected("SYMBOL_DENIED", "symbol denied")
+    if type(captured) is not int or captured <= 0:
+        raise CaptureRejected("INVALID_TIMESTAMP", "invalid capture clock")
+    if type(rows) is list and not rows:
+        raise CaptureRejected("EMPTY_HISTORY", "invalid history")
+    if type(rows) is not list or not (100 if long_window else 1) <= len(rows) <= (160 if long_window else 5):
+        raise CaptureRejected("INVALID_COUNT", "invalid history")
     previous = 0
     for row in rows:
         if type(row) is not dict or set(row) != FIELDS:
-            raise ValueError("invalid bar")
+            raise CaptureRejected("INVALID_BAR", "invalid bar")
         ts = row["timestamp"]
         if type(ts) is not int or not previous < ts <= captured or ts < captured - (200 if long_window else 14)*86400:
-            raise ValueError("invalid timestamp")
+            raise CaptureRejected("INVALID_TIMESTAMP", "invalid timestamp")
         o, h, l, c, v = (row[k] for k in ("open", "high", "low", "close", "volume"))
         if any(type(n) not in (int, float) or not math.isfinite(n) for n in (o,h,l,c,v)):
-            raise ValueError("invalid number")
+            raise CaptureRejected("INVALID_NUMBER", "invalid number")
         if min(o,h,l,c) <= 0 or l > min(o,c) or h < max(o,c) or h < l:
-            raise ValueError("invalid OHLC")
+            raise CaptureRejected("INVALID_OHLC", "invalid OHLC")
         if not 0 <= v <= 9007199254740991 or int(v) != v:
-            raise ValueError("invalid volume")
+            raise CaptureRejected("INVALID_VOLUME", "invalid volume")
         previous = ts
     if long_window and rows[0]["timestamp"] > captured - 140*86400:
-        raise ValueError("short history span")
+        raise CaptureRejected("INSUFFICIENT_SPAN", "short history span")
     if previous < captured - 7*86400:
-        raise ValueError("stale history")
+        raise CaptureRejected("STALE_HISTORY", "stale history")
     raw = json.dumps(rows, separators=(",", ":"), allow_nan=False).encode("ascii")
     if len(raw) > (49152 if long_window else 16384):
-        raise ValueError("oversized bars")
+        raise CaptureRejected("OVERSIZED_BARS", "oversized bars")
     return {"schema": "YAHOO_HISTORY_SNAPSHOT_V1",
             "provider": "Yahoo Finance via original yfinance",
             "symbol": symbol, "period": period, "interval": "1d",
@@ -72,30 +99,47 @@ def build_snapshot(rows, captured: int, symbol: str = "SPY", period: str = "5d")
 def capture(directory: Path, symbol: str = "SPY", period: str = "5d") -> None:
     long_window = period == "6mo"
     if period not in ("5d", "6mo") or (long_window and symbol not in LONG_SYMBOLS):
-        raise ValueError("window denied")
+        raise CaptureRejected("WINDOW_DENIED", "window denied")
     ack = os.environ.get("FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK")
     if type(symbol) is not str or symbol not in ALLOWED_SYMBOLS:
-        raise ValueError("symbol denied")
+        raise CaptureRejected("SYMBOL_DENIED", "symbol denied")
     if (long_window and ack != DUAL_ACK) or (not long_window and ack not in (MULTI_ACK, DUAL_ACK) and not (ack == ACK and symbol == "SPY")):
-        raise ValueError("explicit opt-in required")
-    private_directory(directory)
-    if long_window or symbol != "SPY":
-        directory = directory / ("long-" + symbol if long_window else symbol)
+        raise CaptureRejected("OPT_IN_REQUIRED", "explicit opt-in required")
+    try:
         private_directory(directory)
-    lock = os.open(directory / ".capture.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+        if long_window or symbol != "SPY":
+            directory = directory / ("long-" + symbol if long_window else symbol)
+            private_directory(directory)
+    except (OSError, ValueError):
+        raise CaptureRejected("UNSAFE_DIRECTORY", "unsafe directory") from None
+    try:
+        lock = os.open(directory / ".capture.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError:
+        raise CaptureRejected("LOCK_UNAVAILABLE", "unsafe lock") from None
     try:
         st = os.fstat(lock)
         if not stat.S_ISREG(st.st_mode) or st.st_uid != os.geteuid() or stat.S_IMODE(st.st_mode) != 0o600 or st.st_nlink != 1:
-            raise ValueError("unsafe lock")
-        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            raise CaptureRejected("LOCK_UNAVAILABLE", "unsafe lock")
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise CaptureRejected("LOCK_UNAVAILABLE", "capture lock unavailable") from None
         # Import only after opt-in and private-directory checks. The original
         # adapter owns adjustment semantics and provider conversion.
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fincept-qt" / "scripts"))
-        import yfinance_data as original
-        original._NET_TIMEOUT = 6.0
-        rows = original.get_historical_period(symbol, period, "1d")
+        try:
+            import yfinance_data as original
+            original._NET_TIMEOUT = 6.0
+            rows = original.get_historical_period(symbol, period, "1d", strict_research=True)
+        except Exception:
+            raise CaptureRejected("ADAPTER_UNAVAILABLE", "original adapter unavailable") from None
+        if type(rows) is dict and rows == {"error": "RESEARCH_RAW_INVALID_BAR"}:
+            raise CaptureRejected("RAW_INVALID_BAR", "invalid unrounded provider bar")
         snapshot = build_snapshot(rows, int(time.time()), symbol, period)
-        publish(directory, snapshot)
+        try:
+            publish(directory, snapshot)
+        except (OSError, ValueError):
+            raise CaptureRejected("PUBLICATION_REJECTED", "publication rejected") from None
         print("FINCEPT_F2_HISTORY_CAPTURE_OK", "symbol="+symbol, "bars="+str(len(rows)),
               "captured_at_unix="+str(snapshot["captured_at_unix"]),
               "sha256="+snapshot["bars_sha256"])
@@ -111,9 +155,9 @@ def main() -> int:
     args = parser.parse_args()
     try:
         capture(args.inbox, args.symbol, args.period)
-    except Exception:
+    except Exception as exc:
         # Never print provider error strings, cookies, headers or prices.
-        print("FINCEPT_F2_HISTORY_CAPTURE_UNAVAILABLE")
+        print("FINCEPT_F2_HISTORY_CAPTURE_UNAVAILABLE", "reason="+failure_reason(exc))
         return 1
     return 0
 

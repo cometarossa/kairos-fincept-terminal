@@ -67,6 +67,7 @@ def build_archive(rows, captured):
         "schema": SCHEMA, "symbol": SYMBOL, "period": "1y", "interval": "1h",
         "provider": "Yahoo Finance via original yfinance",
         "adjustment": "AUTO_ADJUST_TRUE_BACK_ADJUST_FALSE",
+        "price_precision": "UNROUNDED_PROVIDER_FLOAT",
         "captured_at_unix": captured, "rows": len(rows),
         "bars_sha256": hashlib.sha256(raw).hexdigest(),
         "bars_base64": base64.b64encode(raw).decode("ascii"),
@@ -124,7 +125,7 @@ def capture(directory: Path):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "fincept-qt" / "scripts"))
         import yfinance_data as original
         original._NET_TIMEOUT = 6.0
-        rows = original.get_historical_period(SYMBOL, "1y", "1h", strict_research=True)
+        rows = original.get_historical_period(SYMBOL, "1y", "1h", strict_research=True, preserve_research_precision=True)
         encoded = build_archive(rows, int(time.time()))
         digest = hashlib.sha256(encoded).hexdigest()
         inspect_archive(encoded, digest)

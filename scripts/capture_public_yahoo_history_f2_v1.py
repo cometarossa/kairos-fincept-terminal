@@ -75,6 +75,12 @@ def build_snapshot(rows, captured: int, symbol: str = "SPY", period: str = "5d")
         ts = row["timestamp"]
         if type(ts) is not int or not previous < ts <= captured or ts < captured - (760 if archive_window else 200 if long_window else 14)*86400:
             raise CaptureRejected("INVALID_TIMESTAMP", "invalid timestamp")
+        # Daily archive only: different epochs on one UTC date must not
+        # inflate sample size. Ten days is a conservative gap bound, not
+        # an exchange-session calendar or completeness attestation.
+        if archive_window and previous and (
+                ts // 86400 <= previous // 86400 or ts - previous > 10 * 86400):
+            raise CaptureRejected("INSUFFICIENT_SPAN", "invalid daily archive coverage")
         o, h, l, c, v = (row[k] for k in ("open", "high", "low", "close", "volume"))
         if any(type(n) not in (int, float) or not math.isfinite(n) for n in (o,h,l,c,v)):
             raise CaptureRejected("INVALID_NUMBER", "invalid number")

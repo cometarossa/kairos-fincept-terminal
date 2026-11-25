@@ -1156,7 +1156,22 @@ def _public_yahoo_history_qa_unavailable(symbol, exception=None):
             "qa_failure_class": _public_yahoo_history_qa_class(symbol, exception)}
 
 
-def get_historical_period(symbol, period='6mo', interval='1d'):
+def _research_raw_bar_valid(row):
+    """Validate original adjusted provider cells BEFORE any rounding/coercion."""
+    try:
+        values = [row[k] for k in ("Open", "High", "Low", "Close", "Volume")]
+        if any(isinstance(v, (bool,)) or pd.isna(v) for v in values):
+            return False
+        o, h, l, c, v = map(float, values)
+        return (all(math.isfinite(n) for n in (o, h, l, c, v))
+                and min(o, h, l, c) > 0
+                and l <= min(o, c) and h >= max(o, c) and h >= l
+                and 0 <= v <= 9007199254740991 and v.is_integer())
+    except (TypeError, ValueError, OverflowError, KeyError):
+        return False
+
+
+def get_historical_period(symbol, period='6mo', interval='1d', *, strict_research=False):
     """Fetch historical data using a period string (e.g., '1mo', '6mo', '1y', '5y')"""
     try:
         import io, contextlib
@@ -1185,6 +1200,10 @@ def get_historical_period(symbol, period='6mo', interval='1d'):
 
         historical_data = []
         for index, row in hist.iterrows():
+            if strict_research and not _research_raw_bar_valid(row):
+                # Never round an invalid provider bar into valid-looking research data.
+                # Reject the WHOLE series, without exposing provider values.
+                return {"error": "RESEARCH_RAW_INVALID_BAR"}
             # Same NaN guard as get_historical — this is the chart path, where
             # one halted bar previously blanked the entire series.
             # Keep NaN/missing closes as explicit null: dropping the bar would

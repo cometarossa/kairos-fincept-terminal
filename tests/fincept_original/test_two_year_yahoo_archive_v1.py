@@ -72,6 +72,31 @@ class ArchiveWindowTests(unittest.TestCase):
             self.assertFalse((root / "long-SPY").exists())
             self.assertTrue((root / "archive-2y-SPY" / "snapshot.json").is_file())
 
+    def test_daily_archive_rejects_duplicate_dates_and_long_gaps(self):
+        rr = rows()
+        rr[100]["timestamp"] = rr[99]["timestamp"] + 1
+        with self.assertRaises(capture.CaptureRejected):
+            capture.build_snapshot(rr, NOW, "SPY", "2y")
+        rr = rows()
+        del rr[100:110]
+        with self.assertRaises(capture.CaptureRejected):
+            capture.build_snapshot(rr, NOW, "EURUSD=X", "2y")
+
+    def test_failed_archive_capture_preserves_previous_snapshot(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory).resolve()
+            dest = root / "archive-2y-EURUSD=X"
+            dest.mkdir(mode=0o700)
+            old = dest / "snapshot.json"
+            old.write_text('{"captured_at_unix":1795599999}')
+            old.chmod(0o600)
+            before = old.read_bytes()
+            adapter = types.SimpleNamespace(get_historical_period=lambda *a, **k: [])
+            with patch.dict(os.environ, {"FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK": capture.ARCHIVE_ACK}), patch.dict(sys.modules, {"yfinance_data": adapter}), patch.object(capture.time, "time", return_value=NOW):
+                with self.assertRaises(capture.CaptureRejected):
+                    capture.capture(root, "EURUSD=X", "2y")
+            self.assertEqual(old.read_bytes(), before)
+
     def test_legacy_windows_unchanged(self):
         rr = rows(5, 4)
         self.assertEqual(capture.build_snapshot(rr, NOW, "SPY", "5d")["period"], "5d")

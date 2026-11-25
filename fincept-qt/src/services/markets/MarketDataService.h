@@ -33,6 +33,8 @@ struct QuoteData {
     // freshness. Aggregate initializers across existing widgets stay valid.
     QuoteDeliveryOrigin delivery_origin = QuoteDeliveryOrigin::Unknown;
     QString local_received_at_utc; // local clock on successful provider response
+    qint64 provider_claimed_market_time_unix = 0; // F2 public claim, NOT independent as-of
+    qint64 quote_snapshot_captured_at_unix = 0;
 };
 
 struct InfoData {
@@ -109,6 +111,7 @@ class MarketDataService : public QObject, public fincept::datahub::Producer {
     /// Phase 3+: prefer `DataHub::subscribe(this, "market:quote:<sym>", ...)` for streaming widgets.
     /// This callback API remains for one-shot reads (e.g. report builder snapshots).
     void fetch_quotes(const QStringList& symbols, QuoteCallback cb);
+    bool configure_readonly_quote_inbox(const QString& directory);
 
     using NewsCallback = std::function<void(bool, QJsonArray)>;
     void fetch_news(const QString& symbol, int count, NewsCallback cb);
@@ -177,6 +180,7 @@ class MarketDataService : public QObject, public fincept::datahub::Producer {
     };
     std::optional<HistorySelftestFixture> history_selftest_fixture_;
     QString readonly_history_inbox_;
+    QString readonly_quote_inbox_;
     bool readonly_history_multi_asset_ = false;
     bool readonly_history_long_window_ = false;
 

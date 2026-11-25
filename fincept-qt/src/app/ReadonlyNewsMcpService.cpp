@@ -12,6 +12,7 @@
 #include "mcp/tools/NewsTools.h"
 #include "mcp/tools/MarketsTools.h"
 #include "services/markets/MarketDataService.h"
+#include "services/markets/ReadonlyQuoteInbox.h"
 #include "services/news/NewsService.h"
 #include "storage/cache/CacheManager.h"
 #include "storage/sqlite/CacheDatabase.h"
@@ -393,6 +394,43 @@ int run_readonly_news_mcp_service(int argc, char* argv[]) {
         expected_tools = 2;
         if (!history_registered || fincept::mcp::McpProvider::instance().tool_count() != expected_tools) {
             diagnostic("FINCEPT_F2_DENIED_HISTORY_TOOL_CATALOGUE_DRIFT");
+            fincept::mcp::McpProvider::instance().clear();
+            fincept::CacheDatabase::instance().close();
+            return 1;
+        }
+    }
+
+    // Separately opt in to exactly one original cache-only quote handler.
+    const auto quote_ack = qgetenv("FINCEPT_READONLY_QUOTE_INGRESS_ACK");
+    if (!quote_ack.isEmpty()) {
+        const QString directory = home + QLatin1String("/quote-ingress");
+        if (quote_ack != "PUBLIC_YAHOO_QUOTE_RESEARCH_V1" ||
+            !private_service_home(directory, ::geteuid()) ||
+            !fincept::services::MarketDataService::instance().configure_readonly_quote_inbox(directory)) {
+            diagnostic("FINCEPT_F2_DENIED_QUOTE_CONFIGURATION");
+            fincept::mcp::McpProvider::instance().clear();
+            fincept::CacheDatabase::instance().close();
+            return 2;
+        }
+        bool quote_registered = false;
+        for (auto& tool : fincept::mcp::tools::get_markets_tools()) {
+            if (tool.name != QLatin1String("get_quote")) continue;
+            if (quote_registered || tool.is_destructive ||
+                tool.auth_required != fincept::mcp::AuthLevel::None || !tool.handler) break;
+            auto original = std::move(tool.handler);
+            tool.description = "Read a short-lived public Yahoo research quote from a private inbox; provider time is unverified, no trading or refresh.";
+            tool.handler = [original](const QJsonObject& args) -> fincept::mcp::ToolResult {
+                if (args.size() != 1 || !args.value("symbol").isString() ||
+                    !fincept::services::readonly_quote::allowed(args.value("symbol").toString()))
+                    return fincept::mcp::ToolResult::fail(QStringLiteral("FINCEPT_UNAVAILABLE"));
+                return original(args);
+            };
+            fincept::mcp::McpProvider::instance().register_tool(std::move(tool));
+            quote_registered = true;
+        }
+        ++expected_tools;
+        if (!quote_registered || fincept::mcp::McpProvider::instance().tool_count() != expected_tools) {
+            diagnostic("FINCEPT_F2_DENIED_QUOTE_TOOL_CATALOGUE_DRIFT");
             fincept::mcp::McpProvider::instance().clear();
             fincept::CacheDatabase::instance().close();
             return 1;

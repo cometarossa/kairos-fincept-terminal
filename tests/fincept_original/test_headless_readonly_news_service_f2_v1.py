@@ -848,3 +848,11 @@ def test_history_diagnostic_never_forwards_unknown_exception_text():
     capture = _history_capture_module()
     assert capture.failure_reason(RuntimeError("private token")) == "INTERNAL_FAILURE"
     assert capture.failure_reason(capture.CaptureRejected("private token", "private token")) == "INTERNAL_FAILURE"
+
+
+def test_hourly_archive_offline_contract():
+    # Run the dedicated stdlib suite within the existing network-none QA job.
+    test = Path(__file__).with_name("test_hourly_yahoo_archive_v1.py")
+    result = subprocess.run([sys.executable, "-B", str(test), "-v"],
+                            capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0, result.stdout + result.stderr

@@ -14,6 +14,7 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QTimeZone>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -488,7 +489,7 @@ void MarketDataService::fetch_quotes(const QStringList& symbols, QuoteCallback c
         q.low = obj->value("low").toDouble();
         q.volume = obj->value("volume").toDouble();
         q.delivery_origin = QuoteDeliveryOrigin::UnexpiredCacheHit;
-        q.local_received_at_utc = QDateTime::fromSecsSinceEpoch(obj->value("local_received_at_unix").toInteger(), Qt::UTC).toString(Qt::ISODateWithMs);
+        q.local_received_at_utc = QDateTime::fromSecsSinceEpoch(obj->value("local_received_at_unix").toInteger(), QTimeZone::UTC).toString(Qt::ISODateWithMs);
         q.provider_claimed_market_time_unix = obj->value("provider_claimed_market_time_unix").toInteger();
         q.quote_snapshot_captured_at_unix = obj->value("captured_at_unix").toInteger();
         cb(true, {q});

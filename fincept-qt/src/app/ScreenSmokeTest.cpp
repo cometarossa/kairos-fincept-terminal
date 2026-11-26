@@ -8,11 +8,13 @@
 #include "datahub/DataHubMetaTypes.h"
 #include "datahub/TopicPolicy.h"
 #include "screens/dashboard/widgets/MarketQuoteStripWidget.h"
+#include "screens/dashboard/widgets/LoadingOverlay.h"
 #include "services/markets/MarketDataService.h"
 
 #include <QCoreApplication>
 #include <QElapsedTimer>
 #include <QEventLoop>
+#include <QGridLayout>
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QLabel>
@@ -112,9 +114,197 @@ bool dashboard_quote_datahub_smoke() {
         std::fprintf(stderr, "[Smoke] OK: original dashboard DataHub quote widget painted synthetic value\n");
         std::fflush(stderr);
     }
+    // An unrelated quote error must never affect this widget. The real
+    // DataHub error registry, not a mocked callback, delivers these events.
+    hub.publish_error(QStringLiteral("market:quote:FINCEPT_QA_UNRELATED"), QStringLiteral("synthetic_other"));
+    QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const bool isolated = change && change->text() == QStringLiteral("+1.25%");
+
+    hub.publish_error(topic, QStringLiteral("synthetic_qa_provider_unavailable"));
+    QElapsedTimer err_t;
+    err_t.start();
+    while (change && change->text() != QStringLiteral("Last quote") && err_t.elapsed() < 2500)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const bool old_quote_marked = price && change &&
+                                  price->text() == QStringLiteral("123.45") &&
+                                  change->text() == QStringLiteral("Last quote") &&
+                                  change->toolTip().contains(QStringLiteral("synthetic_qa_provider_unavailable"));
+
+    const services::QuoteData recovered{symbol, symbol, 125.0, 2.0, 1.60,
+                                        126.0, 122.0, 0.0,
+                                        services::QuoteDeliveryOrigin::Unknown, QString{}};
+    hub.publish(topic, QVariant::fromValue(recovered));
+    QElapsedTimer recovery_t;
+    recovery_t.start();
+    while (change && change->text() != QStringLiteral("+1.60%") && recovery_t.elapsed() < 2500)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const bool recovered_cleanly = price && change &&
+                                   price->text() == QStringLiteral("125.00") &&
+                                   change->text() == QStringLiteral("+1.60%") &&
+                                   change->toolTip().isEmpty();
+
+    // Prove last-known-value survival after *actual* cache removal.
+    // A push-only topic ignores TTL, so setting TTL=1 would NOT test
+    // cache expiry: it would simply replay the cached value. Retire the
+    // synthetic-only topic while hidden, then restore push-only policy.
+    // This tests the stronger absent-cache case without any producer call.
+    widget.hide();
+    hub.retire_topic(topic);
+    hub.set_policy(topic, policy); // no cached data, still no provider/network
+    const bool cache_absent = !hub.peek_raw(topic).isValid();
+    widget.show();
+    spin(20); // process queued initial-value callbacks before new error
+    hub.publish_error(topic, QStringLiteral("synthetic_after_hide_no_cache"));
+    spin(20);
+    auto* original_overlay = widget.findChild<screens::widgets::LoadingOverlay*>();
+    const bool preserved_after_hide = cache_absent && !hub.peek_raw(topic).isValid() &&
+                                      original_overlay && !original_overlay->is_active() &&
+                                      price && change &&
+                                      price->text() == QStringLiteral("125.00") &&
+                                      change->text() == QStringLiteral("Last quote") &&
+                                      !widget.is_waiting_for_first_data() &&
+                                      !widget.is_showing_error();
     widget.hide();
     hub.unsubscribe(&widget);
-    return valid;
+
+    // A second genuine widget with no price at all must show a provider
+    // error instead of indefinitely showing loading. A later valid quote
+    // must clear that error and restore the original price rendering path.
+    const QString missing_symbol = QStringLiteral("FINCEPT_QA_MISSING_ONLY");
+    const QString missing_topic = QStringLiteral("market:quote:") + missing_symbol;
+    hub.set_policy(missing_topic, policy); // push-only: no broker or public provider
+    QJsonArray missing_symbols;
+    missing_symbols.append(missing_symbol);
+    QJsonObject missing_cfg;
+    missing_cfg.insert(QStringLiteral("symbols"), missing_symbols);
+    screens::widgets::MarketQuoteStripWidget missing(missing_cfg);
+    missing.show();
+    hub.publish_error(missing_topic, QStringLiteral("synthetic_no_quote"));
+    QElapsedTimer missing_t;
+    missing_t.start();
+    while (!missing.is_showing_error() && missing_t.elapsed() < 2500)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const bool empty_error = missing.is_showing_error();
+    const services::QuoteData first_quote{missing_symbol, missing_symbol, 99.0, 1.0, 1.0,
+                                          100.0, 98.0, 0.0,
+                                          services::QuoteDeliveryOrigin::Unknown, QString{}};
+    hub.publish(missing_topic, QVariant::fromValue(first_quote));
+    QLabel* missing_price = missing.findChild<QLabel*>(QStringLiteral("quoteStripPrice"));
+    QElapsedTimer clear_t;
+    clear_t.start();
+    while ((missing.is_showing_error() ||
+            !missing_price || missing_price->text() != QStringLiteral("99.00")) &&
+           clear_t.elapsed() < 2500)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const bool error_cleared = !missing.is_showing_error() &&
+                               missing_price && missing_price->text() == QStringLiteral("99.00");
+    missing.hide();
+    hub.unsubscribe(&missing);
+
+    // Multi-row regression: a good last-known quote must stay visible if a
+    // second, never-populated row fails, irrespective of error ordering.
+    // Both topics are synthetic and PUSH-ONLY: no public data or IG requests.
+    const QString mixed_good_symbol = QStringLiteral("FINCEPT_QA_MIX_LAST_GOOD");
+    const QString mixed_empty_symbol = QStringLiteral("FINCEPT_QA_MIX_EMPTY");
+    const QString mixed_good_topic = QStringLiteral("market:quote:") + mixed_good_symbol;
+    const QString mixed_empty_topic = QStringLiteral("market:quote:") + mixed_empty_symbol;
+    hub.set_policy(mixed_good_topic, policy);
+    hub.set_policy(mixed_empty_topic, policy);
+    const services::QuoteData mixed_quote{mixed_good_symbol, mixed_good_symbol, 77.77, 0.77, 0.77,
+                                         78.0, 77.0, 0.0,
+                                         services::QuoteDeliveryOrigin::Unknown, QString{}};
+    hub.publish(mixed_good_topic, QVariant::fromValue(mixed_quote));
+    QJsonArray mixed_symbols;
+    mixed_symbols.append(mixed_good_symbol);
+    mixed_symbols.append(mixed_empty_symbol);
+    QJsonObject mixed_cfg;
+    mixed_cfg.insert(QStringLiteral("symbols"), mixed_symbols);
+    screens::widgets::MarketQuoteStripWidget mixed(mixed_cfg);
+    mixed.show();
+    auto* mixed_host = mixed.findChild<QWidget*>(QStringLiteral("quoteStripRows"));
+    auto* mixed_overlay = mixed.findChild<screens::widgets::LoadingOverlay*>();
+    auto* mixed_grid = mixed_host ? qobject_cast<QGridLayout*>(mixed_host->layout()) : nullptr;
+    auto label_at = [mixed_grid](int row, int col) -> QLabel* {
+        if (!mixed_grid)
+            return nullptr;
+        auto* item = mixed_grid->itemAtPosition(row, col);
+        return item ? qobject_cast<QLabel*>(item->widget()) : nullptr;
+    };
+    QLabel* mixed_good_price = label_at(0, 1);
+    QLabel* mixed_good_change = label_at(0, 2);
+    QLabel* mixed_empty_price = label_at(1, 1);
+    QLabel* mixed_empty_change = label_at(1, 2);
+    QElapsedTimer mixed_t;
+    mixed_t.start();
+    while (mixed_good_price && mixed_good_price->text() != QStringLiteral("77.77") &&
+           mixed_t.elapsed() < 2500)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
+    const bool mixed_first = mixed_good_price && mixed_good_change &&
+                             mixed_good_price->text() == QStringLiteral("77.77") &&
+                             mixed_good_change->text() == QStringLiteral("+0.77%") &&
+                             mixed_overlay && !mixed_overlay->is_active() &&
+                             !mixed.is_waiting_for_first_data();
+
+    // Remove cached A while the widget is unsubscribed, then resubscribe.
+    // The two error orders previously produced different full-tile overlays.
+    mixed.hide();
+    hub.retire_topic(mixed_good_topic);
+    hub.set_policy(mixed_good_topic, policy);
+    const bool mixed_cache_absent = !hub.peek_raw(mixed_good_topic).isValid();
+    const auto mixed_rows_visible = [&]() {
+        return mixed_good_price && mixed_good_change && mixed_empty_price && mixed_empty_change &&
+               mixed_good_price->text() == QStringLiteral("77.77") &&
+               mixed_good_change->text() == QStringLiteral("Last quote") &&
+               mixed_empty_price->text() == QStringLiteral("—") &&
+               mixed_empty_change->text() == QStringLiteral("Unavailable") &&
+               mixed_overlay && !mixed_overlay->is_active() &&
+               !mixed.is_showing_error() && !mixed.is_waiting_for_first_data();
+    };
+    mixed.show();
+    spin(20);
+    hub.publish_error(mixed_empty_topic, QStringLiteral("synthetic_batch_empty_first"));
+    hub.publish_error(mixed_good_topic, QStringLiteral("synthetic_batch_good_second"));
+    spin(20);
+    const bool mixed_empty_first = mixed_cache_absent && mixed_rows_visible();
+
+    mixed.hide();
+    mixed.show();
+    spin(20);
+    hub.publish_error(mixed_good_topic, QStringLiteral("synthetic_batch_good_first"));
+    hub.publish_error(mixed_empty_topic, QStringLiteral("synthetic_batch_empty_second"));
+    spin(20);
+    const bool mixed_good_first = mixed_rows_visible();
+
+    const services::QuoteData mixed_recovered{mixed_empty_symbol, mixed_empty_symbol, 55.55, 1.0, 1.50,
+                                               56.0, 54.0, 0.0,
+                                               services::QuoteDeliveryOrigin::Unknown, QString{}};
+    hub.publish(mixed_empty_topic, QVariant::fromValue(mixed_recovered));
+    spin(20);
+    const bool mixed_partial_recovery =
+        mixed_good_price && mixed_good_change && mixed_empty_price && mixed_empty_change &&
+        mixed_good_price->text() == QStringLiteral("77.77") &&
+        mixed_good_change->text() == QStringLiteral("Last quote") &&
+        mixed_empty_price->text() == QStringLiteral("55.55") &&
+        mixed_empty_change->text() == QStringLiteral("+1.50%") &&
+        mixed_overlay && !mixed_overlay->is_active() &&
+        !mixed.is_showing_error() && !mixed.is_waiting_for_first_data();
+    mixed.hide();
+    hub.unsubscribe(&mixed);
+
+    const bool all_ok = valid && isolated && old_quote_marked &&
+                        recovered_cleanly && preserved_after_hide &&
+                        empty_error && error_cleared && mixed_first &&
+                        mixed_empty_first && mixed_good_first && mixed_partial_recovery;
+    if (!all_ok) {
+        std::fprintf(stderr,
+                     "[Smoke] FAIL: DataHub quote isolation / last quote / no-cache / recovery / mixed rows: %d %d %d %d %d %d %d %d %d %d %d\n",
+                     int(valid), int(isolated), int(old_quote_marked),
+                     int(recovered_cleanly), int(preserved_after_hide),
+                     int(empty_error), int(error_cleared), int(mixed_first),
+                     int(mixed_empty_first), int(mixed_good_first), int(mixed_partial_recovery));
+        std::fflush(stderr);
+    }
+    return all_ok;
 }
 
 const QString kDashboardId = QStringLiteral("dashboard");

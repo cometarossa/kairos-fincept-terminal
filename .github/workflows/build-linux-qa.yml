@@ -148,6 +148,24 @@ jobs:
         \ [ \"${{ runner.os }}\" == \"macOS\" ] && [ ! -f \"build/${{ matrix.exe }}\" ]; then\n  BINARY=\"build/${{ matrix.exe }}.app/Contents/MacOS/${{\
         \ matrix.exe }}\"\nelse\n  BINARY=\"build/${{ matrix.exe }}\"\nfi\nexport LD_LIBRARY_PATH=\"${QT_ROOT_DIR}/lib:${LD_LIBRARY_PATH:-}\"\
         \nbash ../.github/scripts/ci_app_checks.sh selftests \"$BINARY\" ci\n"
+    - name: Verify DataHub quote error source regression contracts
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 -m unittest discover -s tests/fincept_original -p 'test_original_dashboard_datahub_quote_error_f0_v1.py' -v
+    - name: Run original dashboard DataHub quote/error smoke (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      working-directory: fincept-qt
+      timeout-minutes: 12
+      run: |
+        set -euo pipefail
+        export LD_LIBRARY_PATH="${QT_ROOT_DIR}/lib:${LD_LIBRARY_PATH:-}"
+        # Full original screen walk, including the native synthetic-only
+        # quote/error/recovery regression; --smoke-test disables GUI
+        # pre-warm and broker session monitors in main.cpp.
+        bash ../.github/scripts/ci_app_checks.sh smoke "build/${{ matrix.exe }}" ci-quote-error-smoke 540
     - name: Package (Windows)
       if: runner.os == 'Windows'
       shell: bash

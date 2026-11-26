@@ -91,6 +91,7 @@ void MarketQuoteStripWidget::build_rows() {
         delete it;
     }
     rows_.clear();
+    has_quote_.clear(); // Only a real row rebuild invalidates the last quote.
 
     // One host carries the stylesheet for every row label (objectName + "dir"
     // property selectors) — see apply_styles().
@@ -132,7 +133,12 @@ void MarketQuoteStripWidget::hub_resubscribe() {
     // Drop the cross-config received set so a re-subscribe after a config
     // change shows the loading overlay until each new symbol publishes once.
     received_.clear();
-    set_loading_progress(received_.size(), symbols_.size());
+    // A retained real quote is still useful while other symbols refresh.
+    // An all-tile loading overlay would conceal it, even with no new ticks.
+    if (has_quote_.isEmpty())
+        set_loading_progress(received_.size(), symbols_.size());
+    else
+        set_loading(false);
     for (const auto& sym : symbols_) {
         const QString topic = QStringLiteral("market:quote:") + sym;
         hub.subscribe(this, topic, [this](const QVariant& v) {
@@ -141,11 +147,45 @@ void MarketQuoteStripWidget::hub_resubscribe() {
             on_quote(v.value<fincept::services::QuoteData>());
         });
     }
+    // Error topics are independent from value topics. Never let one broken
+    // provider or an unrelated symbol blank the other quote rows.
+    hub.subscribe_pattern_errors(this, QStringLiteral("market:quote:*"),
+                                 [this](const QString& topic, const QString& error) {
+        const QString symbol = topic.mid(QStringLiteral("market:quote:").size());
+        auto it = rows_.find(symbol);
+        if (it == rows_.end())
+            return;
+        Row& row = it.value();
+        row.change->setToolTip(tr("Quote refresh failed: %1").arg(error.left(120)));
+        quote_strip_set_dir(row.change, "unknown");
+        if (has_quote_.contains(symbol)) {
+            // The DataHub deliberately retains last-known-good on error.
+            // The widget also retains its rendered quote when hidden, even
+            // after the hub's cache TTL expires. Do not erase that price.
+            row.change->setText(tr("Last quote"));
+            // A fresh subscription has no current ticks: don't obscure a
+            // retained real price with the empty-loading watchdog/overlay.
+            set_loading(false);
+            return;
+        }
+        row.price->setText(QStringLiteral("—"));
+        row.change->setText(tr("Unavailable"));
+        if (has_quote_.isEmpty()) {
+            // No row has ever shown a genuine quote: explain why the whole
+            // strip is blank. Otherwise keep the valid rows on screen and
+            // label only this never-populated row as unavailable.
+            set_error(tr("Quote %1 unavailable: %2").arg(symbol, error.left(120)));
+        } else {
+            set_loading(false);
+        }
+    });
     hub_active_ = true;
 }
 
 void MarketQuoteStripWidget::hub_unsubscribe_all() {
-    datahub::DataHub::instance().unsubscribe(this);
+    auto& hub = datahub::DataHub::instance();
+    hub.unsubscribe_pattern_errors(this, QStringLiteral("market:quote:*"));
+    hub.unsubscribe(this);
     hub_active_ = false;
 }
 
@@ -166,12 +206,20 @@ void MarketQuoteStripWidget::on_quote(const fincept::services::QuoteData& q) {
     if (it == rows_.end())
         return;
     Row& r = it.value();
+    r.change->setToolTip(QString{});
     r.price->setText(QString::number(q.price, 'f', 2));
     const QString sign = q.change_pct >= 0 ? "+" : "";
     r.change->setText(QString("%1%2%").arg(sign).arg(q.change_pct, 0, 'f', 2));
     quote_strip_set_dir(r.change, q.change_pct >= 0 ? "up" : "down");
+    has_quote_.insert(q.symbol);
     received_.insert(q.symbol);
-    set_loading_progress(received_.size(), symbols_.size());
+    // A fresh quote for just one symbol must never re-arm a full-widget
+    // overlay over previously painted rows. Complete bursts still update
+    // the determinate progress bookkeeping.
+    if (received_.size() == symbols_.size())
+        set_loading_progress(received_.size(), symbols_.size());
+    else
+        set_loading(false);
 }
 
 QDialog* MarketQuoteStripWidget::make_config_dialog(QWidget* parent) {

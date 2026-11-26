@@ -178,6 +178,10 @@ def run_strategy(strategy, mean_ret, cov, n, extra=None):
 
         elif strategy in ("target_return",):
             tgt = extra.get("target_return", 0.10)
+            if (isinstance(tgt, bool) or not isinstance(tgt, (int, float))
+                    or not np.isfinite(tgt)
+                    or tgt < float(np.min(mean_ret)) or tgt > float(np.max(mean_ret))):
+                return {"error": "Infeasible target return"}
             cons = constraints + [{"type": "eq", "fun": lambda w: port_ret(w) - tgt}]
             res = minimize(port_vol, w0, method="SLSQP",
                            bounds=bounds, constraints=cons,
@@ -199,13 +203,24 @@ def run_strategy(strategy, mean_ret, cov, n, extra=None):
             w = np.ones(n) / n
             return _build_result(w, mean_ret, cov, strategy)
 
-        if not getattr(res, "success", False):
-            # Still use best-found weights
-            pass
-        return _build_result(res.x, mean_ret, cov, strategy)
+        if not _valid_solution(res, n):
+            return {"error": "Optimization failed or violated weight constraints"}
+        result = _build_result(res.x, mean_ret, cov, strategy)
+        if strategy == "target_return" and abs(result["return"] - tgt) > 1e-7:
+            return {"error": "Optimization violated target return"}
+        return result
 
     except Exception as exc:
         return {"error": str(exc)}
+
+
+def _valid_solution(res, n):
+    if not getattr(res, "success", False):
+        return False
+    w = np.asarray(res.x, dtype=float)
+    return (w.shape == (n,) and np.all(np.isfinite(w))
+            and np.all(w >= -1e-8) and np.all(w <= 1.0 + 1e-8)
+            and abs(float(w.sum()) - 1.0) <= 1e-8)
 
 
 def _build_result(weights, mean_ret, cov, strategy):
@@ -238,10 +253,12 @@ def build_frontier(mean_ret, cov, n, num_points=40):
         constraints=[{"type": "eq", "fun": lambda w: np.sum(w) - 1.0}],
         options={"ftol": 1e-9, "maxiter": 1000},
     )
+    if not _valid_solution(min_vol_res, n):
+        return []
     min_ret = float(np.dot(min_vol_res.x, mean_ret))
     max_ret = float(np.max(mean_ret))          # upper bound: all-in best asset
 
-    targets = np.linspace(min_ret, max_ret * 0.95, num_points)
+    targets = np.linspace(min_ret, max_ret, num_points)
     points  = []
 
     for tgt in targets:
@@ -256,11 +273,11 @@ def build_frontier(mean_ret, cov, n, num_points=40):
                 bounds=bounds, constraints=cons,
                 options={"ftol": 1e-9, "maxiter": 500},
             )
-            if res.success or res.fun < 1.0:
-                vol = float(res.fun)
-                ret = float(np.dot(res.x, mean_ret))
-                sh  = float((ret - RF) / vol) if vol > 1e-10 else 0.0
-                points.append({"volatility": vol, "return": ret, "sharpe": sh})
+            if _valid_solution(res, n):
+                result = _build_result(res.x, mean_ret, cov, "target_return")
+                ret, vol = result["return"], result["volatility"]
+                if abs(ret - tgt) <= 1e-7 and np.isfinite(vol):
+                    points.append({"volatility": vol, "return": ret, "sharpe": result["sharpe"]})
         except Exception:
             pass
 

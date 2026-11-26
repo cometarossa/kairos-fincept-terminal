@@ -133,13 +133,15 @@ std::optional<QVector<HistoryPoint>> read_history_inbox(const QString& directory
         bars.isEmpty() || bars.size() > max_payload || bars.toBase64() != encoded ||
         obj.value("bars_sha256").toString().toLatin1() != QCryptographicHash::hash(bars, QCryptographicHash::Sha256).toHex())
         return std::nullopt;
-    const auto decoded = history_integrity::decode(QJsonDocument::fromJson(bars), now);
+    auto decoded = history_integrity::decode(QJsonDocument::fromJson(bars), now);
     if (!decoded || decoded->size() > (long_window ? 160 : 5) ||
         (long_window && (decoded->size() < 100 || decoded->first().timestamp > captured - 140 * 86400)) ||
         decoded->first().timestamp < captured - (long_window ? 200 : 14) * 86400 ||
         decoded->last().timestamp > captured ||
         decoded->last().timestamp < captured - 7 * 86400)
         return std::nullopt;
+    for (auto& point : *decoded)
+        point.readonly_snapshot_captured_at_unix = captured;
     return decoded;
 #endif
 }

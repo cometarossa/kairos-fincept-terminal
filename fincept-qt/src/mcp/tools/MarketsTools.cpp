@@ -310,6 +310,21 @@ std::vector<ToolDef> get_markets_tools() {
 
             QJsonObject out{{"symbol", symbol}, {"period", period}, {"interval", interval},
                             {"count", bars.size()}, {"total_bars", total_bars}, {"bars", bars}};
+            // F2-only argument is registered by the dedicated service wrapper.
+            // Bind to the exact decoded points, not a second read of the inbox.
+            if (args.value("include_local_snapshot_provenance").toBool(false)) {
+                const qint64 captured = points.isEmpty() ? 0 : points.first().readonly_snapshot_captured_at_unix;
+                const qint64 ttl = period == QLatin1String("6mo") ? 86400 : 900;
+                const auto now = QDateTime::currentSecsSinceEpoch();
+                if (captured <= 0 || captured > now || captured <= now - ttl ||
+                    !std::all_of(points.cbegin(), points.cend(), [captured](const auto& p) {
+                        return p.readonly_snapshot_captured_at_unix == captured;
+                    }))
+                    return ToolResult::fail(QStringLiteral("FINCEPT_UNAVAILABLE"));
+                out["local_snapshot_provenance"] = QJsonObject{
+                    {"captured_at_unix", captured}, {"valid_until_unix", captured + ttl},
+                    {"local_clock_verified", false}, {"market_as_of_verified", false}};
+            }
             if (first_bar > 0) {
                 out["truncated"] = true;
                 return ToolResult::ok(QStringLiteral("Returned the latest %1 of %2 bars (oldest %3 omitted) — raise "

@@ -148,8 +148,10 @@ class SnapshotInbox {
   public:
     explicit SnapshotInbox(QString directory) : directory_(std::move(directory)) {}
 
+    qint64 expires_at() const { return expires_.load(); }
+
     bool ready() const {
-        return expires_.load() > QDateTime::currentSecsSinceEpoch();
+        return expires_at() > QDateTime::currentSecsSinceEpoch();
     }
 
     void refresh() {
@@ -336,12 +338,30 @@ int run_readonly_news_mcp_service(int argc, char* argv[]) {
             fincept::CacheDatabase::instance().close();
             return 1;
         }
+        tool.input_schema.properties.insert("include_local_snapshot_provenance", QJsonObject{
+            {"type", "boolean"}, {"default", false}, {"description", "Local F2 inbox expiry, not market freshness"}});
         auto original_handler = std::move(tool.handler);
         tool.handler = [original_handler, inbox](const QJsonObject& args) -> fincept::mcp::ToolResult {
-            if ((inbox && !inbox->ready()) || args.value(QStringLiteral("force")).toBool(false) ||
+            const bool evidence = args.value("include_local_snapshot_provenance").toBool(false);
+            const auto before = inbox ? inbox->expires_at() : 0;
+            if ((inbox && !inbox->ready()) || (evidence && before <= QDateTime::currentSecsSinceEpoch()) ||
+                args.value(QStringLiteral("force")).toBool(false) ||
                 fincept::CacheManager::instance().get(QStringLiteral("news:articles")).isNull())
                 return fincept::mcp::ToolResult::fail(QStringLiteral("FINCEPT_UNAVAILABLE"));
-            return original_handler(args);
+            auto result = original_handler(args);
+            if (!evidence || !result.success)
+                return result;
+            // Refresh clears expiry before replacing cache and never re-admits
+            // the same capture. Reject if a different generation intervened.
+            if (!inbox || inbox->expires_at() != before || before <= QDateTime::currentSecsSinceEpoch() ||
+                !result.data.isObject())
+                return fincept::mcp::ToolResult::fail(QStringLiteral("FINCEPT_UNAVAILABLE"));
+            auto data = result.data.toObject();
+            data.insert("local_snapshot_provenance", QJsonObject{
+                {"captured_at_unix", before - kSnapshotTtl}, {"valid_until_unix", before},
+                {"local_clock_verified", false}, {"market_as_of_verified", false}});
+            result.data = data;
+            return result;
         };
         fincept::mcp::McpProvider::instance().register_tool(std::move(tool));
         registered = true;
@@ -375,6 +395,8 @@ int run_readonly_news_mcp_service(int argc, char* argv[]) {
             if (history_registered || tool.is_destructive ||
                 tool.auth_required != fincept::mcp::AuthLevel::None || !tool.handler)
                 break;
+            tool.input_schema.properties.insert("include_local_snapshot_provenance", QJsonObject{
+                {"type", "boolean"}, {"default", false}, {"description", "Local F2 inbox expiry, not market freshness"}});
             auto original = std::move(tool.handler);
             tool.handler = [original, multi_asset, long_window](const QJsonObject& args) -> fincept::mcp::ToolResult {
                 const auto symbol = args.value("symbol").toString();

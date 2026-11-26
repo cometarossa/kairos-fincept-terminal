@@ -478,15 +478,17 @@ def _unwrap(resp, what):
         payload = resp.json()
     except Exception:
         raise ScreenerError(f"Yahoo {what} returned HTTP {resp.status_code} with a non-JSON body")
-    finance = (payload or {}).get("finance") or {}
+    if type(payload) is not dict or type(payload.get("finance")) is not dict:
+        raise ScreenerError(f"Yahoo {what} returned an invalid envelope")
+    finance = payload["finance"]
     err = finance.get("error")
     if err:
-        desc = err.get("description") or err.get("code") or "unknown error"
+        desc = (err.get("description") or err.get("code") or "unknown error") if type(err) is dict else "invalid error envelope"
         raise ScreenerError(f"Yahoo rejected the {what}: {desc}")
     if resp.status_code != 200:
         raise ScreenerError(f"Yahoo {what} failed with HTTP {resp.status_code}")
-    result = finance.get("result") or []
-    if not result or not isinstance(result[0], dict):
+    result = finance.get("result")
+    if type(result) is not list or len(result) != 1 or type(result[0]) is not dict:
         raise ScreenerError(f"Yahoo {what} returned no result block")
     return result[0]
 
@@ -704,13 +706,32 @@ def _records_for(session, symbols, columns):
         "query": _eq_or("ticker", symbols), "userId": "", "userIdType": "guid", "includeFields": include,
     }
     res = _post(session, body, records=True, what="sector/fundamentals lookup")
-    return {r.get("ticker"): r for r in (res.get("records") or []) if isinstance(r, dict)}
+    records = {}
+    requested = set(symbols)
+    record_rows = res.get("records")
+    if type(record_rows) is not list:
+        raise ScreenerError("Invalid fundamentals result list")
+    for row in record_rows:
+        if not isinstance(row, dict) or type(row.get("ticker")) is not str:
+            raise ScreenerError("Invalid fundamentals row identity")
+        ticker = row["ticker"]
+        if ticker not in requested or ticker in records:
+            raise ScreenerError("Unexpected or duplicate fundamentals row identity")
+        records[ticker] = row
+    return records
 
 
 def _assemble(session, kind, quotes, total, offset, columns, sort_field, sort_asc, meta):
-    rows = [_row_from_quote(q) for q in quotes if isinstance(q, dict) and q.get("symbol")]
+    if type(quotes) is not list or any(
+        type(q) is not dict or type(q.get("symbol")) is not str or not q["symbol"].strip()
+        for q in quotes
+    ):
+        raise ScreenerError("Invalid quote result list or row identity")
+    rows = [_row_from_quote(q) for q in quotes]
     warnings = list(meta.pop("warnings", []))
     symbols = [r["symbol"] for r in rows]
+    if len(set(symbols)) != len(symbols):
+        raise ScreenerError("Duplicate quote row identity")
     try:
         records = _records_for(session, symbols, columns)
     except ScreenerError as exc:
@@ -727,11 +748,25 @@ def _assemble(session, kind, quotes, total, offset, columns, sort_field, sort_as
             row["pe"] = _num(rec.get("peRatioLtm"))
         for col in columns:
             row["fields"][col["id"]] = _num(rec.get(FIELD_BY_ID[col["field"]][3]))
-    if records and len(records) < len(rows):
+    if len(records) < len(rows):
         warnings.append(f"Yahoo returned fundamentals for {len(records)} of {len(rows)} rows.")
 
-    times = [int(r["market_time"]) for r in rows if isinstance(r.get("market_time"), (int, float))]
-    delays = [int(r["delay_min"]) for r in rows if isinstance(r.get("delay_min"), (int, float))]
+    fetched_at = int(time.time())
+    # Never coerce bool, fractional, future, or non-finite provider clocks.
+    for row in rows:
+        stamp, delay = row["market_time"], row["delay_min"]
+        if type(stamp) is not int or not 0 < stamp <= fetched_at:
+            row["market_time"] = None
+        if type(delay) is not int or delay < 0:
+            row["delay_min"] = None
+    times = [r["market_time"] for r in rows if r["market_time"] is not None]
+    delays = [r["delay_min"] for r in rows if r["delay_min"] is not None]
+    if len(delays) < len(rows):
+        warnings.append("One or more quote delays are missing or invalid; delay coverage is incomplete.")
+    if len(set(times)) > 1:
+        warnings.append("Quote timestamps differ across rows; as_of is the latest reported quote time, not a common market snapshot.")
+    if len(times) < len(rows):
+        warnings.append("One or more quote timestamps are missing; as_of does not establish snapshot completeness.")
     out = {
         "source": SOURCE,
         "kind": kind,
@@ -744,7 +779,7 @@ def _assemble(session, kind, quotes, total, offset, columns, sort_field, sort_as
         "rows": rows,
         "as_of": max(times) if times else None,
         "max_delay_min": max(delays) if delays else None,
-        "fetched_at": int(time.time()),
+        "fetched_at": fetched_at,
         "criteria_note": CRITERIA_NOTE,
         "warnings": warnings,
     }
@@ -792,7 +827,7 @@ def run_custom(criteria, count, sort_field, sort_asc, offset):
     _log(f"custom screen: {json.dumps(query)[:400]} sort={sort_f[2]} asc={sort_asc} count={count} offset={offset}")
     res = _post(session, body, records=False, what="screen")
     meta = {"screen_id": None, "title": "Custom screen", "description": "", "criteria_text": _describe(query)}
-    return _assemble(session, "custom", res.get("quotes") or [], res.get("total"), offset,
+    return _assemble(session, "custom", res.get("quotes"), res.get("total"), offset,
                      _extra_columns(used, sort_f[0]), sort_f[0], sort_asc, meta)
 
 
@@ -812,7 +847,7 @@ def run_predefined(screen_id, count, offset):
             query = None
     sort_yahoo = meta_block.get("sortField")
     sort_asc = str(meta_block.get("sortType") or "DESC").upper() == "ASC"
-    quotes = res.get("quotes") or []
+    quotes = res.get("quotes")
     total = res.get("total")
     if offset > 0:
         if not query:
@@ -821,7 +856,7 @@ def run_predefined(screen_id, count, offset):
                 "sortType": "ASC" if sort_asc else "DESC", "quoteType": meta_block.get("quoteType") or "EQUITY",
                 "query": query, "userId": "", "userIdType": "guid"}
         page = _post(session, body, records=False, what="screen page")
-        quotes = page.get("quotes") or []
+        quotes = page.get("quotes")
         total = page.get("total", total)
 
     crit_fields = [FIELD_BY_YAHOO[c.get("field")][0] for c in (meta_block.get("criteria") or [])

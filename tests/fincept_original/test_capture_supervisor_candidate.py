@@ -54,6 +54,28 @@ class Tests(unittest.TestCase):
    self.assertTrue(entered.wait(1));self.m=300;self.assertEqual(self.s.history_tick(),"HISTORY_BUSY_SKIPPED")
   finally:release.set();t.join(2)
   self.assertFalse(self.calls)
+ def test_long_slots_replace_not_add_and_keep_symbol_rotation(self):
+  self.s.long_history_worker=lambda x:self.calls.append(("long",x)) or 0
+  for i in range(288):
+   self.m=(i+1)*300
+   self.assertEqual(self.s.history_tick(),"LONG_HISTORY_OK" if i%144 in (2,7) else "HISTORY_OK")
+   self.assertEqual(self.s.history_tick(),"NOT_DUE")
+  self.assertEqual(len(self.calls),288)
+  self.assertEqual([(i,x) for i,x in enumerate(self.calls) if x[0]=="long"],[(2,("long","SPY")),(7,("long","EURUSD=X")),(146,("long","SPY")),(151,("long","EURUSD=X"))])
+  self.assertTrue(all(x[1]==("SPY","EURUSD=X")[i%2] for i,x in enumerate(self.calls)))
+ def test_long_failure_and_busy_never_retry(self):
+  self.s.long_history_worker=lambda x:self.calls.append(("long",x)) or 1
+  for self.m in (300,600):self.assertEqual(self.s.history_tick(),"HISTORY_OK")
+  self.m=900;self.assertEqual(self.s.history_tick(),"LONG_HISTORY_UNAVAILABLE")
+  self.assertEqual(self.s.history_tick(),"NOT_DUE")
+  self.m=1200;self.assertEqual(self.s.history_tick(),"HISTORY_OK")
+  self.assertEqual(self.calls,[("history","SPY"),("history","EURUSD=X"),("long","SPY"),("history","EURUSD=X")])
+  self.s.index=7;self.m=1500
+  with (self.root/"worker.lock").open("r+") as f:
+   fcntl.flock(f,fcntl.LOCK_EX|fcntl.LOCK_NB)
+   self.assertEqual(self.s.history_tick(),"HISTORY_BUSY_SKIPPED")
+  self.assertEqual(self.s.history_tick(),"NOT_DUE")
+  self.assertEqual(len(self.calls),4)
  def test_child_exit(self):
   self.assertEqual(run_child([sys.executable,"-c","raise SystemExit(0)"],{},stop=threading.Event()),0)
  def test_child_timeout(self):

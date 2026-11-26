@@ -10,6 +10,14 @@ class Tests(unittest.TestCase):
   self.assertEqual(h["HTTPS_PROXY"],"http://127.0.0.1:10001")
   self.assertEqual(q["HTTPS_PROXY"],"http://127.0.0.1:10002")
   self.assertFalse(any(k.startswith(("IG_","BROKER_")) for k in h|q))
+ def test_long_environment_exact_and_quote_denied(self):
+  h=child_env(10001,"history",period="6mo")
+  self.assertEqual(h["FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK"],"DUAL_WINDOW_YAHOO_HISTORY_SNAPSHOT_V1")
+  self.assertEqual(h["HTTPS_PROXY"],"http://127.0.0.1:10001")
+  self.assertNotIn("FINCEPT_PUBLIC_QUOTE_CAPTURE_ACK",h)
+  self.assertEqual(child_env(10001,"history")["FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK"],"MULTI_YAHOO_HISTORY_SNAPSHOT_V1")
+  for lane,period in (("quote","6mo"),("history","2y"),("history","1y")):
+   with self.assertRaises(ValueError):child_env(10001,lane,period=period)
  def test_real_socket_request_claim(self):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td)

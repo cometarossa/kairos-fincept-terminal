@@ -1,0 +1,119 @@
+"""Opt-in Linux supervisor; one history/quote child at a time, no direct egress.
+Host admission must supply fixed private mounts and a separately reviewed relay.
+"""
+import errno,fcntl,json,os,select,signal,socket,socketserver,stat,sys,threading,time
+from pathlib import Path
+from capture_supervisor_candidate import Supervisor,run_child,SCOPE
+from public_quote_request_gate_v1 import safe_file
+
+ACK="FINCEPT_YAHOO_CAPTURE_SERVICE_V1"
+ROOT=Path("/capture")
+CONTROL=Path("/control")
+REQUEST=Path("/request")
+HISTORY=Path("/inbox")
+QUOTES=Path("/quote-inbox")
+RELAY=Path("/relay")
+
+def private_dir(path):
+    s=path.lstat()
+    if not stat.S_ISDIR(s.st_mode) or s.st_uid!=os.geteuid() or stat.S_IMODE(s.st_mode)!=0o700:
+        raise ValueError("UNSAFE_DIRECTORY")
+
+def child_env(port,lane):
+    url="http://127.0.0.1:"+str(port)
+    env={"PATH":"/usr/local/bin:/usr/bin:/bin","HOME":"/tmp","XDG_CACHE_HOME":"/tmp","PYTHONDONTWRITEBYTECODE":"1",
+         "HTTP_PROXY":url,"HTTPS_PROXY":url,"ALL_PROXY":url,"http_proxy":url,"https_proxy":url,"all_proxy":url,"NO_PROXY":"","no_proxy":""}
+    if lane=="history":
+        env["FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK"]="MULTI_YAHOO_HISTORY_SNAPSHOT_V1"
+    elif lane=="quote":
+        env["FINCEPT_PUBLIC_QUOTE_CAPTURE_ACK"]="PUBLIC_YAHOO_QUOTE_RESEARCH_V1"
+        env["FINCEPT_PUBLIC_YAHOO_QUOTE_ACK"]="PUBLIC_YAHOO_QUOTE_RESEARCH_V1"
+    else:raise ValueError("LANE_DENIED")
+    return env
+
+class Relay(socketserver.BaseRequestHandler):
+    def handle(self):
+        with socket.socket(socket.AF_UNIX) as peer:
+            try:
+                peer.settimeout(5);peer.connect(str(self.server.relay_path))
+                self.request.settimeout(5)
+                end=time.monotonic()+45
+                totals={self.request:0,peer:0}
+                while time.monotonic()<end:
+                    ready,_,_=select.select([self.request,peer],[],[],1)
+                    for a in ready:
+                        b=a.recv(65536)
+                        if not b:return
+                        totals[a]+=len(b)
+                        if totals[a]>3010000:return
+                        (peer if a is self.request else self.request).sendall(b)
+            except OSError:return
+
+class LocalRelay(socketserver.ThreadingMixIn,socketserver.TCPServer):
+    daemon_threads=True
+    request_queue_size=6
+    def __init__(self,path):
+        self.relay_path=path
+        super().__init__(("127.0.0.1",0),Relay)
+
+def serve_request(conn,supervisor,*,enabled):
+    deadline=time.monotonic()+1
+    try:
+        chunks=bytearray()
+        while len(chunks)<=512:
+            remaining=deadline-time.monotonic()
+            if remaining<=0:return
+            conn.settimeout(remaining)
+            part=conn.recv(513-len(chunks))
+            if not part:break
+            chunks.extend(part)
+        result=supervisor.quote(bytes(chunks),scope=SCOPE if enabled else None)
+        conn.sendall((result+"\n").encode("ascii"))
+    except (OSError,ValueError):return
+
+def main():
+    if os.environ.get("FINCEPT_YAHOO_CAPTURE_SERVICE_ACK")!=ACK:return 2
+    if os.geteuid()==0 or set(os.listdir("/sys/class/net"))!={"lo"} or any(k.startswith(("IG_","BROKER_")) for k in os.environ):return 2
+    with socket.socket() as s:
+        s.settimeout(1)
+        try:s.connect(("192.0.2.1",443))
+        except OSError as e:
+            if e.errno not in (errno.ENETUNREACH,errno.EHOSTUNREACH,errno.EPERM,errno.EACCES):return 2
+        else:return 2
+    stop=threading.Event()
+    for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stop.set())
+    os.umask(0o077)
+    private_dir(CONTROL);private_dir(REQUEST);private_dir(HISTORY);private_dir(QUOTES)
+    for sym in ("SPY","EURUSD=X"):private_dir(QUOTES/sym)
+    fd=os.open(CONTROL/"supervisor.lock",os.O_RDWR|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)
+    try:
+        safe_file(fd);fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
+        path=REQUEST/"request.sock"
+        if os.path.lexists(path):return 2
+        with LocalRelay(RELAY/"history.sock") as history,LocalRelay(RELAY/"quote.sock") as quote,socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as listener:
+            listener.bind(str(path));os.chmod(path,0o600);listener.listen(2);listener.settimeout(.2)
+            threads=[threading.Thread(target=s.serve_forever,daemon=True) for s in (history,quote)]
+            for t in threads:t.start()
+            def worker(lane,symbol):
+                server=history if lane=="history" else quote
+                script="capture_public_yahoo_"+lane+"_f2_v1.py"
+                inbox=HISTORY if lane=="history" else QUOTES
+                return run_child([sys.executable,str(ROOT/"scripts"/script),"--inbox",str(inbox),"--symbol",symbol],child_env(server.server_address[1],lane),stop=stop)
+            supervisor=Supervisor(CONTROL,history_worker=lambda s:worker("history",s),quote_worker=lambda s:worker("quote",s))
+            enabled=os.environ.get("FINCEPT_YAHOO_QUOTE_REQUEST_ACK")==SCOPE
+            print("FINCEPT_CAPTURE_SUPERVISOR_READY",flush=True)
+            try:
+                while not stop.is_set():
+                    status=supervisor.history_tick()
+                    if status!="NOT_DUE":print(status,flush=True)
+                    try:conn,_=listener.accept()
+                    except socket.timeout:continue
+                    with conn:
+                        if not stop.is_set():serve_request(conn,supervisor,enabled=enabled)
+            finally:
+                for s in (history,quote):s.shutdown()
+                path.unlink()
+                print("FINCEPT_CAPTURE_SUPERVISOR_STOPPED",flush=True)
+    finally:os.close(fd)
+    return 0
+if __name__=="__main__":raise SystemExit(main())

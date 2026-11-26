@@ -208,6 +208,8 @@ def capture(directory: Path, symbol: str = "SPY", period: str = "5d") -> None:
                 if candidate in REASONS:
                     reason = candidate
             raise CaptureRejected(reason, "invalid unrounded provider bar")
+        if type(rows) is dict and "error" in rows:
+            raise CaptureRejected("ADAPTER_UNAVAILABLE", "original adapter returned an error")
         snapshot = build_snapshot(rows, int(time.time()), symbol, period)
         try:
             publish(directory, snapshot)

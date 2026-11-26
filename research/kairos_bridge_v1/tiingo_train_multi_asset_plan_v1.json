@@ -1,0 +1,31 @@
+{
+  "schema": "FINCEPT_TIINGO_TRAIN_MULTI_ASSET_DEVELOPMENT_V1",
+  "dataset_class": "DEVELOPMENT_CONTAMINATED",
+  "source": "TIINGO_EOD",
+  "start_inclusive": "2018-01-01",
+  "end_exclusive": "2019-01-01",
+  "price_basis": "RETROSPECTIVE_ADJUSTED_OHLC_RAW_VOLUME_UNUSED",
+  "assets": [
+    "AAPL",
+    "JPM",
+    "XOM"
+  ],
+  "weights": [
+    "0.4",
+    "0.3",
+    "0.3"
+  ],
+  "allocation": "INDEPENDENT_INITIAL_CAPITAL_SLEEVES_NO_REBALANCE",
+  "strategy": "sma_crossover",
+  "fast": 5,
+  "slow": 20,
+  "execution": "next_open",
+  "initial_capital": "100000",
+  "commission": "0.001",
+  "slippage": "0.0005",
+  "selection_authorized": false,
+  "scientific_claim": false,
+  "execution_authority": false,
+  "costs_verified": false,
+  "holdout_access": false
+}

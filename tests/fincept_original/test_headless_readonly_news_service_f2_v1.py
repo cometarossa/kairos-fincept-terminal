@@ -995,3 +995,128 @@ def test_local_snapshot_provenance_is_opt_in_and_bound_to_decoded_capture():
     assert 'args.value("include_local_snapshot_provenance").toBool(false)' in tools
     assert "p.readonly_snapshot_captured_at_unix == captured" in tools
     assert "captured <= now - ttl" in tools
+
+
+def test_original_screener_inbox_native(native_bin, monkeypatch):
+    """Original Python screen -> local receipt -> original Qt MCP; synthetic provider transport only."""
+    import copy
+    import hashlib
+    import base64
+    monkeypatch.syspath_prepend(str(ROOT.parent / "scripts"))
+    import screener_data
+    import screener_snapshot_v1
+
+    class Response:
+        status_code = 200
+
+        def __init__(self, value):
+            self.value = value
+
+        def json(self):
+            return {"finance": {"result": [copy.deepcopy(self.value)], "error": None}}
+
+    class Session:
+        def __init__(self):
+            self.calls = []
+            self.now = int(time.time())
+
+        def get(self, **kw):
+            self.calls.append("get")
+            return Response({"quotes": [
+                {"symbol": s, "currency": "USD", "regularMarketPrice": price,
+                 "regularMarketTime": self.now - 10, "exchangeDataDelayedBy": 15}
+                for s, price in (("QA-A", 10.0), ("QA-B", 20.0))],
+                "total": 2, "rawCriteria": json.dumps({"query": {"operator": "GT", "operands": ["percentchange", 3]}}),
+                "criteriaMeta": {"sortField": "percentchange", "sortType": "DESC", "quoteType": "EQUITY"}})
+
+        def post(self, url, **kw):
+            self.calls.append("post")
+            return Response({"records": [{"ticker": "QA-A", "sector": "Technology", "percentchange": 5.0},
+                                         {"ticker": "QA-B", "sector": "Energy", "percentchange": 4.0}]})
+
+    with tempfile.TemporaryDirectory(prefix="fincept-f2-screener-", dir="/private/tmp" if sys.platform == "darwin" else None) as name:
+        home = Path(name)
+        bearer = private_profile(home)
+        inbox = home / "screener-ingress"
+        inbox.mkdir(mode=0o700)
+        port = port_for_test()
+        env = env_for(home, port)
+        env["FINCEPT_READONLY_SCREENER_INGRESS_ACK"] = "FINCEPT_SCREENER_INBOX_V1"
+        target = inbox / "snapshot.json"
+
+        def publish(envelope):
+            temp = inbox / ".next"
+            temp.write_text(json.dumps(envelope))
+            temp.chmod(0o600)
+            temp.replace(target)
+
+        def screen(**extra):
+            args = {"screen_id": "day_gainers", "limit": 20}
+            args.update(extra)
+            code, body = request(port, "POST", rpc("tools/call", 9, {"name": "get_screener", "arguments": args}), bearer)
+            assert code == 200
+            return body["result"]
+
+        cmd = [native_bin, "--serve-readonly-news"]
+        output = home / "screener.log"
+        with output.open("w+") as log:
+            child = subprocess.Popen(cmd, env=env, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+            try:
+                deadline = time.monotonic() + 15
+                while time.monotonic() < deadline:
+                    assert child.poll() is None
+                    try:
+                        if request(port, "GET")[0] == 200:
+                            break
+                    except (OSError, TimeoutError, http.client.HTTPException):
+                        pass
+                    time.sleep(.1)
+                else:
+                    pytest.fail("screener service not ready")
+                assert request(port, "POST", rpc("tools/list"))[0] == 401
+                code, body = request(port, "POST", rpc("tools/list"), bearer)
+                assert code == 200
+                assert {t["name"] for t in body["result"]["tools"]} == {"get_news", "get_screener"}
+                assert screen()["isError"]
+                session = Session()
+                monkeypatch.setattr(screener_data, "_session", lambda: session)
+                raw = screener_data.run_predefined("day_gainers", 20, 0)
+                assert session.calls == ["get", "post"] and raw["warnings"] == []
+                envelope = screener_snapshot_v1.make_envelope(raw, now=int(time.time()))
+                expected = json.loads(base64.b64decode(envelope["payload_base64"]))
+                publish(envelope)
+                result = screen()
+                assert result["isError"] is False and result["structuredContent"] == expected
+                assert screen(force=True)["isError"] and screen(limit=True)["isError"]
+                assert screen(screen_id="most_actives")["isError"]
+                publish({**envelope, "payload_sha256": "0" * 64})
+                assert screen()["isError"]
+                for key, value in (("execution_authority", True), ("count", True)):
+                    changed = {**expected, key: value}
+                    payload = json.dumps(changed, separators=(",", ":")).encode()
+                    publish({"schema": envelope["schema"], "payload_base64": base64.b64encode(payload).decode(),
+                             "payload_sha256": hashlib.sha256(payload).hexdigest()})
+                    assert screen()["isError"]
+                publish(envelope)
+                target.chmod(0o644)
+                assert screen()["isError"]
+                target.unlink()
+                other = inbox / "other.json"
+                other.write_text(json.dumps(envelope))
+                other.chmod(0o600)
+                target.symlink_to(other)
+                assert screen()["isError"]
+                publish(envelope)
+                assert screen()["isError"] is False
+                assert session.calls == ["get", "post"]
+            finally:
+                if child.poll() is None:
+                    child.send_signal(signal.SIGTERM)
+                    try:
+                        child.wait(timeout=8)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(child.pid, signal.SIGKILL)
+                        child.wait(timeout=4)
+        receipt = output.read_text(errors="replace")
+        assert child.returncode == 0 and "FINCEPT_F2_READONLY_NEWS_STOPPED" in receipt
+        assert bearer not in receipt

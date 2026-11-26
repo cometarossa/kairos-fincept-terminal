@@ -13,6 +13,7 @@
 #include "mcp/tools/MarketsTools.h"
 #include "services/markets/MarketDataService.h"
 #include "services/markets/ReadonlyQuoteInbox.h"
+#include "services/screener/ReadonlyScreenerInbox.h"
 #include "services/news/NewsService.h"
 #include "storage/cache/CacheManager.h"
 #include "storage/sqlite/CacheDatabase.h"
@@ -453,6 +454,45 @@ int run_readonly_news_mcp_service(int argc, char* argv[]) {
         ++expected_tools;
         if (!quote_registered || fincept::mcp::McpProvider::instance().tool_count() != expected_tools) {
             diagnostic("FINCEPT_F2_DENIED_QUOTE_TOOL_CATALOGUE_DRIFT");
+            fincept::mcp::McpProvider::instance().clear();
+            fincept::CacheDatabase::instance().close();
+            return 1;
+        }
+    }
+
+    // Explicit, local inbox only. No ScreenerService::run, Python launch or provider refresh.
+    const auto screener_ack = qgetenv("FINCEPT_READONLY_SCREENER_INGRESS_ACK");
+    if (!screener_ack.isEmpty()) {
+        const QString directory = home + QLatin1String("/screener-ingress");
+        if (screener_ack != "FINCEPT_SCREENER_INBOX_V1" || !private_service_home(directory, ::geteuid())) {
+            diagnostic("FINCEPT_F2_DENIED_SCREENER_CONFIGURATION");
+            fincept::mcp::McpProvider::instance().clear();
+            fincept::CacheDatabase::instance().close();
+            return 2;
+        }
+        fincept::mcp::ToolDef tool;
+        tool.name = "get_screener";
+        tool.description = "Read one locally captured day_gainers screen, max 20 USD rows. Research only; no refresh or trade authority.";
+        tool.category = "market-data";
+        tool.input_schema.properties = QJsonObject{
+            {"screen_id", QJsonObject{{"type", "string"}, {"enum", QJsonArray{"day_gainers"}}}},
+            {"limit", QJsonObject{{"type", "integer"}, {"enum", QJsonArray{20}}}}};
+        tool.input_schema.required = {"screen_id", "limit"};
+        tool.auth_required = fincept::mcp::AuthLevel::None;
+        tool.is_destructive = false;
+        tool.handler = [directory](const QJsonObject& args) -> fincept::mcp::ToolResult {
+            using namespace fincept::services::readonly_screener;
+            if (!request_allowed(args))
+                return fincept::mcp::ToolResult::fail(QStringLiteral("FINCEPT_UNAVAILABLE"));
+            const auto snapshot = read(directory, QDateTime::currentSecsSinceEpoch());
+            if (!snapshot)
+                return fincept::mcp::ToolResult::fail(QStringLiteral("FINCEPT_UNAVAILABLE"));
+            return fincept::mcp::ToolResult::ok_data(*snapshot);
+        };
+        fincept::mcp::McpProvider::instance().register_tool(std::move(tool));
+        ++expected_tools;
+        if (fincept::mcp::McpProvider::instance().tool_count() != expected_tools) {
+            diagnostic("FINCEPT_F2_DENIED_SCREENER_TOOL_CATALOGUE_DRIFT");
             fincept::mcp::McpProvider::instance().clear();
             fincept::CacheDatabase::instance().close();
             return 1;

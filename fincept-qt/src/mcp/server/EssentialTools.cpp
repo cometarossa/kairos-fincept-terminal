@@ -33,6 +33,7 @@ QStringList essential_tool_names() {
             // ── Markets & company research (yfinance-backed, no API key) ─────
             QStringLiteral("get_quote"),
             QStringLiteral("get_history"),
+            QStringLiteral("get_screener"),
             QStringLiteral("lookup_symbol"),
             QStringLiteral("load_equity_symbol"),
             QStringLiteral("get_equity_info"),

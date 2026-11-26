@@ -97,6 +97,14 @@ jobs:
       run: "set -euo pipefail\nSQL_CMAKE=\"${QT_ROOT_DIR}/lib/cmake/Qt6Sql\"\nif [ -d \"${SQL_CMAKE}\" ]; then\n  for drv in QMYSQLDriverPlugin\
         \ QPSQLDriverPlugin QODBCDriverPlugin QMimerSQLDriverPlugin; do\n    rm -fv \"${SQL_CMAKE}/Qt6${drv}\"*.cmake || true\n  done\n\
         else\n  echo \"::warning::${SQL_CMAKE} not found \u2014 skipping SQL plugin config cleanup\"\nfi\n"
+    - name: Native Screener inbox validation (no provider)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        set -euo pipefail
+        cmake -S tests/fincept_original/screener_inbox_native -B "$RUNNER_TEMP/screener-inbox-qa" -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR"
+        cmake --build "$RUNNER_TEMP/screener-inbox-qa" --parallel 2
+        ctest --test-dir "$RUNNER_TEMP/screener-inbox-qa" --output-on-failure
     - name: Configure CMake (Linux)
       if: runner.os == 'Linux'
       working-directory: fincept-qt

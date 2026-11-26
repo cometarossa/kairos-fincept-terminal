@@ -1794,10 +1794,10 @@ class VectorBTProvider(BacktestingProviderBase):
                     return None  # all-or-nothing
                 cols[self._canon_symbol(sym)] = s
             df = pd.DataFrame(cols).dropna()
-            return df.round(4) if len(df) >= 5 else None
+            return df if len(df) >= 5 else None
 
         s = series_for(symbols[0]) if symbols else None
-        return s.round(4) if s is not None else None
+        return s if s is not None else None
 
     def _load_market_data(self, symbols: list, start_date: str, end_date: str,
                           interval: str = '1d', multi_asset: bool = False):

@@ -244,7 +244,8 @@ class SimplePortfolio:
 
     @classmethod
     def from_equity_series(cls, equity: pd.Series, init_cash: float,
-                           trade_records: Optional[pd.DataFrame] = None) -> 'SimplePortfolio':
+                           trade_records: Optional[pd.DataFrame] = None,
+                           total_fees_value: float = 0.0) -> 'SimplePortfolio':
         """Build a SimplePortfolio from a pre-computed equity series (e.g. multi-asset combined).
 
         `trade_records` (the per-symbol trades concatenated) feeds the trade statistics; without
@@ -262,6 +263,7 @@ class SimplePortfolio:
             close_series=close_proxy,
             trade_records=trade_records,
             init_cash=init_cash,
+            total_fees_value=total_fees_value,
         )
 
     # ------------------------------------------------------------------

@@ -1,0 +1,39 @@
+{
+  "schema": "FINCEPT_SPY_NON_SMA_DEVELOPMENT_MATRIX_V1",
+  "dataset_class": "DEVELOPMENT_CONTAMINATED",
+  "snapshot_sha256": "54d8a241d888969a94bc3c811905f9f09d31dda1d6afd9c4c95d647197dd6663",
+  "dataset_already_observed": true,
+  "selection_authorized": false,
+  "scientific_claim": false,
+  "execution_authority": false,
+  "costs_verified": false,
+  "execution": "next_open",
+  "initial_capital": "100000",
+  "commission": "0.001",
+  "slippage": "0.0005",
+  "cases": [
+    {
+      "id": "momentum_20",
+      "kind": "momentum",
+      "params": {
+        "lookback": 20,
+        "threshold": 0
+      }
+    },
+    {
+      "id": "breakout_20",
+      "kind": "breakout",
+      "params": {
+        "period": 20
+      }
+    },
+    {
+      "id": "mean_reversion_20",
+      "kind": "mean_reversion",
+      "params": {
+        "period": 20,
+        "zThreshold": 2
+      }
+    }
+  ]
+}

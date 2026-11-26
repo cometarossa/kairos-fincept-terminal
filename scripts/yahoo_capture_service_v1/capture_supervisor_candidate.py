@@ -8,10 +8,15 @@ from public_quote_request_gate_v1 import dispatch,SCOPE,safe_file
 SYMBOLS=("SPY","EURUSD=X")
 MAX_SECONDS=45
 HISTORY_GUARD=55
+# Opt-in replacement slots, not additional children or provider admissions.
+# At 300s/slot, 144 slots = 12h; restart resets cadence, not relay budget.
+LONG_HISTORY_SLOTS=frozenset({2,7})
+HISTORY_CYCLE=144
 class Supervisor:
-    def __init__(self,root,*,history_worker,quote_worker,mono=time.monotonic,wall=time.time):
+    def __init__(self,root,*,history_worker,quote_worker,long_history_worker=None,mono=time.monotonic,wall=time.time):
         self.root=Path(root)
         self.history_worker=history_worker
+        self.long_history_worker=long_history_worker
         self.quote_worker=quote_worker
         self.mono=mono
         self.wall=wall
@@ -23,6 +28,7 @@ class Supervisor:
         # A missed slot is never caught up with repeated requests.
         self.next_history=start+300
         symbol=SYMBOLS[self.index%2]
+        long_slot=self.long_history_worker is not None and self.index%HISTORY_CYCLE in LONG_HISTORY_SLOTS
         self.index+=1
         fd=None
         try:
@@ -30,7 +36,9 @@ class Supervisor:
             safe_file(fd)
             try:fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
             except BlockingIOError:return "HISTORY_BUSY_SKIPPED"
-            result=self.history_worker(symbol)
+            worker=self.long_history_worker if long_slot else self.history_worker
+            result=worker(symbol)
+            if long_slot:return "LONG_HISTORY_OK" if type(result) is int and result==0 else "LONG_HISTORY_UNAVAILABLE"
             return "HISTORY_OK" if type(result) is int and result==0 else "HISTORY_UNAVAILABLE"
         except Exception:return "HISTORY_UNAVAILABLE"
         finally:

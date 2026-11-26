@@ -791,7 +791,7 @@ def test_six_month_capture_actual_publish_with_mocked_original_adapter(tmp_path,
              "low":99,"close":102,"volume":0} for i in range(120)]
     calls = []
     def fetch(*args, **kwargs):
-        assert kwargs == {"strict_research": True}
+        assert kwargs == {"strict_research": True, "diagnose_research_raw_bar": True}
         calls.append(args)
         return bars
     monkeypatch.setitem(sys.modules, "yfinance_data", types.SimpleNamespace(get_historical_period=fetch))
@@ -807,6 +807,8 @@ def test_six_month_capture_actual_publish_with_mocked_original_adapter(tmp_path,
 @pytest.mark.parametrize("failure,expected", [
     ("empty", "EMPTY_HISTORY"),
     ("raw", "RAW_INVALID_BAR"),
+    ("raw_order", "RAW_INVALID_BAR_OHLC_ORDER"),
+    ("raw_private", "RAW_INVALID_BAR"),
     ("count", "INVALID_COUNT"),
     ("provider", "ADAPTER_UNAVAILABLE"),
     ("ohlc", "INVALID_OHLC"),
@@ -826,12 +828,16 @@ def test_history_capture_diagnostic_is_bounded_and_preserves_prior_snapshot(tmp_
     rows = [{"timestamp":now-(120-i)*129600, "open":1.1,"high":1.2,"low":1.0,"close":1.15,"volume":0} for i in range(120)]
     calls = []
     def fetch(*args, **kwargs):
-        assert kwargs == {"strict_research": True}
+        assert kwargs == {"strict_research": True, "diagnose_research_raw_bar": True}
         calls.append(args)
         if failure == "provider":
             raise RuntimeError("PRIVATE_PROVIDER_MESSAGE secret=not-for-logs")
         if failure == "empty": return []
         if failure == "raw": return {"error": "RESEARCH_RAW_INVALID_BAR"}
+        if failure == "raw_order":
+            return {"error": "RESEARCH_RAW_INVALID_BAR", "raw_bar_failure_class": "OHLC_ORDER"}
+        if failure == "raw_private":
+            return {"error": "RESEARCH_RAW_INVALID_BAR", "raw_bar_failure_class": "PRIVATE_PROVIDER_MESSAGE secret=not-for-logs"}
         if failure == "count": return rows[:99]
         if failure == "ohlc": return [dict(rows[0],low=2.0)] + rows[1:]
         return rows

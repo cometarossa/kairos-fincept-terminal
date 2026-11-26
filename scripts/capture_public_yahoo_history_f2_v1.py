@@ -37,7 +37,10 @@ REASONS = frozenset({
     "WINDOW_DENIED", "SYMBOL_DENIED", "OPT_IN_REQUIRED", "UNSAFE_DIRECTORY",
     "LOCK_UNAVAILABLE", "ADAPTER_UNAVAILABLE", "EMPTY_HISTORY",
     "INVALID_COUNT", "INVALID_TIMESTAMP", "INVALID_BAR", "INVALID_NUMBER",
-    "RAW_INVALID_BAR",
+    "RAW_INVALID_BAR", "RAW_INVALID_BAR_MISSING_OR_BOOLEAN",
+    "RAW_INVALID_BAR_NONFINITE", "RAW_INVALID_BAR_NONPOSITIVE_PRICE",
+    "RAW_INVALID_BAR_OHLC_ORDER", "RAW_INVALID_BAR_VOLUME_RANGE",
+    "RAW_INVALID_BAR_VOLUME_FRACTIONAL", "RAW_INVALID_BAR_CELL_CONVERSION",
     "INVALID_OHLC", "INVALID_VOLUME", "INSUFFICIENT_SPAN", "STALE_HISTORY",
     "OVERSIZED_BARS", "PUBLICATION_REJECTED", "INTERNAL_FAILURE",
 })
@@ -140,11 +143,18 @@ def capture(directory: Path, symbol: str = "SPY", period: str = "5d") -> None:
         try:
             import yfinance_data as original
             original._NET_TIMEOUT = 6.0
-            rows = original.get_historical_period(symbol, period, "1d", strict_research=True)
+            rows = original.get_historical_period(
+                symbol, period, "1d", strict_research=True, diagnose_research_raw_bar=True)
         except Exception:
             raise CaptureRejected("ADAPTER_UNAVAILABLE", "original adapter unavailable") from None
-        if type(rows) is dict and rows == {"error": "RESEARCH_RAW_INVALID_BAR"}:
-            raise CaptureRejected("RAW_INVALID_BAR", "invalid unrounded provider bar")
+        if type(rows) is dict and rows.get("error") == "RESEARCH_RAW_INVALID_BAR":
+            detail = rows.get("raw_bar_failure_class")
+            reason = "RAW_INVALID_BAR"
+            if type(detail) is str:
+                candidate = "RAW_INVALID_BAR_" + detail
+                if candidate in REASONS:
+                    reason = candidate
+            raise CaptureRejected(reason, "invalid unrounded provider bar")
         snapshot = build_snapshot(rows, int(time.time()), symbol, period)
         try:
             publish(directory, snapshot)

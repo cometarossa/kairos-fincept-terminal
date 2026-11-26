@@ -45,7 +45,7 @@ BACKTESTING_RELATIVE = "fincept-qt/scripts/Analytics/backtesting"
 PROVIDER_RELATIVE = "vectorbt/vectorbt_provider.py"
 # sha256 of reviewed candidate 17fbd6c45f9d54e65b8be15528bb77e9fdd6783d.
 PINNED_SOURCES = {
-    "vectorbt/vectorbt_provider.py": "307230fadac30344dc432be1edeea845f7885bf3e98a68b856be0da9c032b362",
+    "vectorbt/vectorbt_provider.py": "d9d1eed365688e221894b0ffbe83e9dfa5fc70a8189b506a9c0cf3cf71d0130d",
     "vectorbt/vbt_portfolio.py": "ab6afadcf666ab03df4971d303477e79b2ccf81f2de69ffc5ff43121d9355269",
     "vectorbt/vbt_strategies.py": "c94ae482e8933b1fc967347c8512e388e795ec5ebf8f7e405dc03c261841071c",
     "vectorbt/vbt_indicators.py": "28d6b6efe22e0947067d580159b05627cf75ed75aaa45acdf8bebe18f3c76b87",

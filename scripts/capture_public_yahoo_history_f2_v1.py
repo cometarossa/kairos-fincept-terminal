@@ -51,6 +51,54 @@ REASONS = frozenset({
 })
 
 
+# Opt-in numeric reason protocol; default CLI exit behavior is unchanged.
+DIAGNOSTIC_ACK = "FINCEPT_HISTORY_REASON_EXIT_V1"
+REASON_EXIT_CODES = {
+    "ADAPTER_UNAVAILABLE": 20,
+    "EMPTY_HISTORY": 21,
+    "INSUFFICIENT_SPAN": 22,
+    "INTERNAL_FAILURE": 23,
+    "INVALID_BAR": 24,
+    "INVALID_COUNT": 25,
+    "INVALID_NUMBER": 26,
+    "INVALID_OHLC": 27,
+    "INVALID_TIMESTAMP": 28,
+    "INVALID_VOLUME": 29,
+    "LOCK_UNAVAILABLE": 30,
+    "OPT_IN_REQUIRED": 31,
+    "OVERSIZED_BARS": 32,
+    "PUBLICATION_REJECTED": 33,
+    "RAW_INVALID_BAR": 34,
+    "RAW_INVALID_BAR_BOOLEAN_CLOSE": 35,
+    "RAW_INVALID_BAR_BOOLEAN_HIGH": 36,
+    "RAW_INVALID_BAR_BOOLEAN_LOW": 37,
+    "RAW_INVALID_BAR_BOOLEAN_OPEN": 38,
+    "RAW_INVALID_BAR_BOOLEAN_VOLUME": 39,
+    "RAW_INVALID_BAR_CELL_CONVERSION": 40,
+    "RAW_INVALID_BAR_MISSING_CLOSE": 41,
+    "RAW_INVALID_BAR_MISSING_HIGH": 42,
+    "RAW_INVALID_BAR_MISSING_LOW": 43,
+    "RAW_INVALID_BAR_MISSING_OPEN": 44,
+    "RAW_INVALID_BAR_MISSING_OR_BOOLEAN": 45,
+    "RAW_INVALID_BAR_MISSING_VOLUME": 46,
+    "RAW_INVALID_BAR_NONFINITE": 47,
+    "RAW_INVALID_BAR_NONPOSITIVE_PRICE": 48,
+    "RAW_INVALID_BAR_OHLC_ORDER": 49,
+    "RAW_INVALID_BAR_VOLUME_FRACTIONAL": 50,
+    "RAW_INVALID_BAR_VOLUME_RANGE": 51,
+    "STALE_HISTORY": 52,
+    "SYMBOL_DENIED": 53,
+    "UNSAFE_DIRECTORY": 54,
+    "WINDOW_DENIED": 55
+}
+
+
+def diagnostic_exit(reason):
+    if os.environ.get("FINCEPT_HISTORY_REASON_EXIT_ACK") != DIAGNOSTIC_ACK:
+        return 1
+    return REASON_EXIT_CODES.get(reason, REASON_EXIT_CODES["INTERNAL_FAILURE"])
+
+
 class CaptureRejected(ValueError):
     def __init__(self, reason: str, message: str):
         super().__init__(message)
@@ -182,8 +230,9 @@ def main() -> int:
         capture(args.inbox, args.symbol, args.period)
     except Exception as exc:
         # Never print provider error strings, cookies, headers or prices.
-        print("FINCEPT_F2_HISTORY_CAPTURE_UNAVAILABLE", "reason="+failure_reason(exc))
-        return 1
+        reason = failure_reason(exc)
+        print("FINCEPT_F2_HISTORY_CAPTURE_UNAVAILABLE", "reason="+reason)
+        return diagnostic_exit(reason)
     return 0
 
 

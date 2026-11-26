@@ -1,7 +1,10 @@
 import json,os,socket,tempfile,threading,unittest,sys
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parents[2]/"scripts/yahoo_capture_service_v1"))
-from capture_service import child_env,serve_request,Supervisor,SCOPE
+from capture_service import child_env,serve_request,Supervisor,SCOPE,history_diagnostic,HISTORY_EXIT_REASONS
+from unittest.mock import patch
+sys.path.insert(0,str(Path(__file__).resolve().parents[2]/"scripts"))
+import capture_public_yahoo_history_f2_v1 as producer
 class Tests(unittest.TestCase):
  def test_separate_envs(self):
   h=child_env(10001,"history");q=child_env(10002,"quote")
@@ -18,6 +21,25 @@ class Tests(unittest.TestCase):
   self.assertEqual(child_env(10001,"history")["FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK"],"MULTI_YAHOO_HISTORY_SNAPSHOT_V1")
   for lane,period in (("quote","6mo"),("history","2y"),("history","1y")):
    with self.assertRaises(ValueError):child_env(10001,lane,period=period)
+ def test_fixed_history_reason_protocol(self):
+  self.assertEqual(set(producer.REASON_EXIT_CODES),producer.REASONS)
+  self.assertEqual(HISTORY_EXIT_REASONS,{v:k for k,v in producer.REASON_EXIT_CODES.items()})
+  self.assertEqual(len(set(producer.REASON_EXIT_CODES.values())),len(producer.REASONS))
+  self.assertTrue(all(20<=x<=100 for x in HISTORY_EXIT_REASONS))
+  with patch.dict(os.environ,{},clear=True):
+   self.assertEqual(producer.diagnostic_exit("RAW_INVALID_BAR_MISSING_CLOSE"),1)
+  with patch.dict(os.environ,{"FINCEPT_HISTORY_REASON_EXIT_ACK":producer.DIAGNOSTIC_ACK},clear=True):
+   for reason,code in producer.REASON_EXIT_CODES.items():
+    self.assertEqual(producer.diagnostic_exit(reason),code)
+    self.assertEqual(history_diagnostic("EURUSD=X","6mo",code),"HISTORY_CAPTURE_DIAGNOSTIC symbol=EURUSD=X period=6mo reason="+reason)
+   self.assertEqual(producer.diagnostic_exit("arbitrary provider text"),producer.REASON_EXIT_CODES["INTERNAL_FAILURE"])
+  self.assertIsNone(history_diagnostic("SPY","5d",0))
+  self.assertIsNone(history_diagnostic("untrusted","6mo",20))
+  self.assertIsNone(history_diagnostic("SPY","other",20))
+  self.assertIsNone(history_diagnostic("SPY","5d",True))
+  self.assertEqual(history_diagnostic("SPY","5d",1),"HISTORY_CAPTURE_DIAGNOSTIC symbol=SPY period=5d reason=CHILD_UNAVAILABLE_UNCLASSIFIED")
+  self.assertEqual(child_env(10001,"history")["FINCEPT_HISTORY_REASON_EXIT_ACK"],producer.DIAGNOSTIC_ACK)
+  self.assertNotIn("FINCEPT_HISTORY_REASON_EXIT_ACK",child_env(10002,"quote"))
  def test_real_socket_request_claim(self):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td)

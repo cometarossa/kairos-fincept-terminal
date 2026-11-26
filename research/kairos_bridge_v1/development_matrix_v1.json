@@ -1,0 +1,31 @@
+{
+  "schema": "FINCEPT_SPY_DEVELOPMENT_MATRIX_V1",
+  "dataset_class": "DEVELOPMENT_CONTAMINATED",
+  "snapshot_sha256": "54d8a241d888969a94bc3c811905f9f09d31dda1d6afd9c4c95d647197dd6663",
+  "dataset_already_observed": true,
+  "selection_authorized": false,
+  "scientific_claim": false,
+  "execution_authority": false,
+  "costs_verified": false,
+  "execution": "next_open",
+  "initial_capital": "100000",
+  "commission": "0.001",
+  "slippage": "0.0005",
+  "cases": [
+    {
+      "id": "sma_5_20",
+      "fast": 5,
+      "slow": 20
+    },
+    {
+      "id": "sma_10_30",
+      "fast": 10,
+      "slow": 30
+    },
+    {
+      "id": "sma_20_50",
+      "fast": 20,
+      "slow": 50
+    }
+  ]
+}

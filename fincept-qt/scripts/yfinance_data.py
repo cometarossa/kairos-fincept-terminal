@@ -1203,23 +1203,42 @@ def _public_yahoo_history_qa_unavailable(symbol, exception=None):
             "qa_failure_class": _public_yahoo_history_qa_class(symbol, exception)}
 
 
-def _research_raw_bar_valid(row):
-    """Validate original adjusted provider cells BEFORE any rounding/coercion."""
+def _research_raw_bar_failure(row):
+    """Return only a fixed reason for the first failed raw OHLCV check.
+
+    No row values, timestamp, provider text, or rounding. The admission
+    predicate remains identical to the original strict validator.
+    """
     try:
         values = [row[k] for k in ("Open", "High", "Low", "Close", "Volume")]
         if any(isinstance(v, (bool,)) or pd.isna(v) for v in values):
-            return False
+            return "MISSING_OR_BOOLEAN"
         o, h, l, c, v = map(float, values)
-        return (all(math.isfinite(n) for n in (o, h, l, c, v))
-                and min(o, h, l, c) > 0
-                and l <= min(o, c) and h >= max(o, c) and h >= l
-                and 0 <= v <= 9007199254740991 and v.is_integer())
+        if not all(math.isfinite(n) for n in (o, h, l, c, v)):
+            return "NONFINITE"
+        if min(o, h, l, c) <= 0:
+            return "NONPOSITIVE_PRICE"
+        if not (l <= min(o, c) and h >= max(o, c) and h >= l):
+            return "OHLC_ORDER"
+        if not 0 <= v <= 9007199254740991:
+            return "VOLUME_RANGE"
+        if not v.is_integer():
+            return "VOLUME_FRACTIONAL"
+        return None
     except (TypeError, ValueError, OverflowError, KeyError):
-        return False
+        return "CELL_CONVERSION"
 
 
-def get_historical_period(symbol, period='6mo', interval='1d', *, strict_research=False, preserve_research_precision=False):
+def _research_raw_bar_valid(row):
+    """Validate original adjusted provider cells BEFORE rounding/coercion."""
+    return _research_raw_bar_failure(row) is None
+
+
+def get_historical_period(symbol, period='6mo', interval='1d', *, strict_research=False, preserve_research_precision=False, diagnose_research_raw_bar=False):
     """Fetch historical data using a period string (e.g., '1mo', '6mo', '1y', '5y')"""
+    if type(diagnose_research_raw_bar) is not bool or (
+            diagnose_research_raw_bar and strict_research is not True):
+        return {"error": "RESEARCH_DIAGNOSTICS_REQUIRES_STRICT"}
     if preserve_research_precision is True and strict_research is not True:
         return {"error": "RESEARCH_PRECISION_REQUIRES_STRICT"}
     try:
@@ -1249,10 +1268,14 @@ def get_historical_period(symbol, period='6mo', interval='1d', *, strict_researc
 
         historical_data = []
         for index, row in hist.iterrows():
-            if strict_research and not _research_raw_bar_valid(row):
-                # Never round an invalid provider bar into valid-looking research data.
-                # Reject the WHOLE series, without exposing provider values.
-                return {"error": "RESEARCH_RAW_INVALID_BAR"}
+            if strict_research:
+                failure = _research_raw_bar_failure(row)
+                if failure is not None:
+                    # The whole series remains denied, including valid preceding rows.
+                    result = {"error": "RESEARCH_RAW_INVALID_BAR"}
+                    if diagnose_research_raw_bar:
+                        result["raw_bar_failure_class"] = failure
+                    return result
             # Same NaN guard as get_historical — this is the chart path, where
             # one halted bar previously blanked the entire series.
             # Keep NaN/missing closes as explicit null: dropping the bar would

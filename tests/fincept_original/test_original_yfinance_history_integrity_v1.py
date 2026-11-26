@@ -168,6 +168,38 @@ class OriginalProviderHistoryConversion(unittest.TestCase):
             self.assertEqual(self.module.get_historical_period("EURUSD=X", "1y", "1h", strict_research=True, preserve_research_precision=True),
                              {"error": "RESEARCH_RAW_INVALID_BAR"})
 
+    def test_fixed_raw_failure_classes_preserve_strict_rejection(self):
+        idx = pd.DatetimeIndex(["2024-01-02", "2024-01-03"], tz="UTC")
+        cases = [
+            ("Volume", float("nan"), "MISSING_OR_BOOLEAN"),
+            ("Close", float("inf"), "NONFINITE"),
+            ("Low", 0, "NONPOSITIVE_PRICE"),
+            ("Low", 2, "OHLC_ORDER"),
+            ("Volume", -1, "VOLUME_RANGE"),
+            ("Volume", 9007199254740992, "VOLUME_RANGE"),
+            ("Volume", 0.5, "VOLUME_FRACTIONAL"),
+            ("Open", "PRIVATE_PROVIDER_VALUE", "CELL_CONVERSION"),
+        ]
+        for field, value, reason in cases:
+            row = {"Open": 1.1, "High": 1.2, "Low": 1.0, "Close": 1.15, "Volume": 0}
+            frame = pd.DataFrame([row, dict(row, **{field: value})], index=idx)
+            with self.subTest(reason=reason), patch.object(
+                    self.module.yf, "Ticker", return_value=types.SimpleNamespace(history=lambda **_: frame)):
+                plain = self.module.get_historical_period("SPY", "5d", "1d", strict_research=True)
+                detailed = self.module.get_historical_period(
+                    "SPY", "5d", "1d", strict_research=True, diagnose_research_raw_bar=True)
+                self.assertEqual(plain, {"error": "RESEARCH_RAW_INVALID_BAR"})
+                self.assertEqual(detailed, {"error": "RESEARCH_RAW_INVALID_BAR",
+                                            "raw_bar_failure_class": reason})
+                self.assertNotIn("PRIVATE_PROVIDER_VALUE", json.dumps(detailed))
+
+    def test_diagnostic_opt_in_requires_strict_before_provider(self):
+        with patch.object(self.module.yf, "Ticker") as ticker:
+            for flag in (True, "yes", 1):
+                result = self.module.get_historical_period("SPY", diagnose_research_raw_bar=flag)
+                self.assertEqual(result, {"error": "RESEARCH_DIAGNOSTICS_REQUIRES_STRICT"})
+            ticker.assert_not_called()
+
     def test_provider_error_is_not_price_data(self):
         def raises(**_):
             raise RuntimeError("Provider unavailable")

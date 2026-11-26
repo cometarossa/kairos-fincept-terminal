@@ -67,7 +67,7 @@ class ArchiveWindowTests(unittest.TestCase):
             (root / "archive-2y-SPY").mkdir(mode=0o700)
             with patch.dict(os.environ, {"FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK": capture.ARCHIVE_ACK}), patch.dict(sys.modules, {"yfinance_data": adapter}), patch.object(capture.time, "time", return_value=NOW):
                 capture.capture(root, "SPY", "2y")
-            self.assertEqual(calls, [("SPY", "2y", "1d", {"strict_research": True})])
+            self.assertEqual(calls, [("SPY", "2y", "1d", {"strict_research": True, "diagnose_research_raw_bar": True})])
             self.assertFalse((root / "snapshot.json").exists())
             self.assertFalse((root / "long-SPY").exists())
             self.assertTrue((root / "archive-2y-SPY" / "snapshot.json").is_file())

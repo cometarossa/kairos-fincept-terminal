@@ -8,6 +8,51 @@ from public_quote_request_gate_v1 import safe_file
 
 ACK="FINCEPT_YAHOO_CAPTURE_SERVICE_V1"
 LONG_ACK="FINCEPT_YAHOO_LONG_HISTORY_REPLACEMENT_V1"
+# Keep exact numeric protocol in sync with the producer; no raw child output.
+HISTORY_EXIT_REASONS = {
+    20: "ADAPTER_UNAVAILABLE",
+    21: "EMPTY_HISTORY",
+    22: "INSUFFICIENT_SPAN",
+    23: "INTERNAL_FAILURE",
+    24: "INVALID_BAR",
+    25: "INVALID_COUNT",
+    26: "INVALID_NUMBER",
+    27: "INVALID_OHLC",
+    28: "INVALID_TIMESTAMP",
+    29: "INVALID_VOLUME",
+    30: "LOCK_UNAVAILABLE",
+    31: "OPT_IN_REQUIRED",
+    32: "OVERSIZED_BARS",
+    33: "PUBLICATION_REJECTED",
+    34: "RAW_INVALID_BAR",
+    35: "RAW_INVALID_BAR_BOOLEAN_CLOSE",
+    36: "RAW_INVALID_BAR_BOOLEAN_HIGH",
+    37: "RAW_INVALID_BAR_BOOLEAN_LOW",
+    38: "RAW_INVALID_BAR_BOOLEAN_OPEN",
+    39: "RAW_INVALID_BAR_BOOLEAN_VOLUME",
+    40: "RAW_INVALID_BAR_CELL_CONVERSION",
+    41: "RAW_INVALID_BAR_MISSING_CLOSE",
+    42: "RAW_INVALID_BAR_MISSING_HIGH",
+    43: "RAW_INVALID_BAR_MISSING_LOW",
+    44: "RAW_INVALID_BAR_MISSING_OPEN",
+    45: "RAW_INVALID_BAR_MISSING_OR_BOOLEAN",
+    46: "RAW_INVALID_BAR_MISSING_VOLUME",
+    47: "RAW_INVALID_BAR_NONFINITE",
+    48: "RAW_INVALID_BAR_NONPOSITIVE_PRICE",
+    49: "RAW_INVALID_BAR_OHLC_ORDER",
+    50: "RAW_INVALID_BAR_VOLUME_FRACTIONAL",
+    51: "RAW_INVALID_BAR_VOLUME_RANGE",
+    52: "STALE_HISTORY",
+    53: "SYMBOL_DENIED",
+    54: "UNSAFE_DIRECTORY",
+    55: "WINDOW_DENIED"
+}
+
+def history_diagnostic(symbol, period, code):
+    if symbol not in ("SPY","EURUSD=X") or period not in ("5d","6mo") or type(code) is not int or code == 0:
+        return None
+    return "HISTORY_CAPTURE_DIAGNOSTIC symbol="+symbol+" period="+period+" reason="+HISTORY_EXIT_REASONS.get(code,"CHILD_UNAVAILABLE_UNCLASSIFIED")
+
 ROOT=Path("/capture")
 CONTROL=Path("/control")
 REQUEST=Path("/request")
@@ -26,6 +71,7 @@ def child_env(port,lane,*,period="5d"):
     env={"PATH":"/usr/local/bin:/usr/bin:/bin","HOME":"/tmp","XDG_CACHE_HOME":"/tmp","PYTHONDONTWRITEBYTECODE":"1",
          "HTTP_PROXY":url,"HTTPS_PROXY":url,"ALL_PROXY":url,"http_proxy":url,"https_proxy":url,"all_proxy":url,"NO_PROXY":"","no_proxy":""}
     if lane=="history":
+        env["FINCEPT_HISTORY_REASON_EXIT_ACK"]="FINCEPT_HISTORY_REASON_EXIT_V1"
         env["FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK"]="DUAL_WINDOW_YAHOO_HISTORY_SNAPSHOT_V1" if period=="6mo" else "MULTI_YAHOO_HISTORY_SNAPSHOT_V1"
     elif lane=="quote":
         env["FINCEPT_PUBLIC_QUOTE_CAPTURE_ACK"]="PUBLIC_YAHOO_QUOTE_RESEARCH_V1"
@@ -102,7 +148,11 @@ def main():
                 inbox=HISTORY if lane=="history" else QUOTES
                 argv=[sys.executable,str(ROOT/"scripts"/script),"--inbox",str(inbox),"--symbol",symbol]
                 if lane=="history":argv+=["--period",period]
-                return run_child(argv,child_env(server.server_address[1],lane,period=period),stop=stop)
+                code=run_child(argv,child_env(server.server_address[1],lane,period=period),stop=stop)
+                if lane=="history":
+                    message=history_diagnostic(symbol,period,code)
+                    if message is not None:print(message,flush=True)
+                return code
             long_enabled=os.environ.get("FINCEPT_YAHOO_LONG_HISTORY_ACK")==LONG_ACK
             supervisor=Supervisor(CONTROL,history_worker=lambda s:worker("history",s),quote_worker=lambda s:worker("quote",s),long_history_worker=(lambda s:worker("history",s,"6mo")) if long_enabled else None)
             enabled=os.environ.get("FINCEPT_YAHOO_QUOTE_REQUEST_ACK")==SCOPE

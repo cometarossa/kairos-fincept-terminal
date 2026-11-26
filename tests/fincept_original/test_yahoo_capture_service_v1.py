@@ -40,6 +40,25 @@ class Tests(unittest.TestCase):
   self.assertEqual(history_diagnostic("SPY","5d",1),"HISTORY_CAPTURE_DIAGNOSTIC symbol=SPY period=5d reason=CHILD_UNAVAILABLE_UNCLASSIFIED")
   self.assertEqual(child_env(10001,"history")["FINCEPT_HISTORY_REASON_EXIT_ACK"],producer.DIAGNOSTIC_ACK)
   self.assertNotIn("FINCEPT_HISTORY_REASON_EXIT_ACK",child_env(10002,"quote"))
+ def test_adapter_error_envelope_is_not_invalid_count(self):
+  import types
+  from contextlib import redirect_stdout
+  from io import StringIO
+  for envelope in ({"error":"private test message","symbol":"EURUSD=X"}, {"error":""}):
+   with self.subTest(envelope=envelope), tempfile.TemporaryDirectory() as td:
+    root=Path(td);target=root/"long-EURUSD=X";target.mkdir(mode=0o700)
+    prior=target/"snapshot.json";prior.write_bytes(b"prior");prior.chmod(0o600)
+    calls=[]
+    def fetch(*args,**kwargs):
+     calls.append((args,kwargs));return envelope
+    output=StringIO()
+    argv=["capture","--inbox",td,"--symbol","EURUSD=X","--period","6mo"]
+    with patch.dict(sys.modules,{"yfinance_data":types.SimpleNamespace(get_historical_period=fetch)}), patch.dict(os.environ,{"FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK":producer.DUAL_ACK,"FINCEPT_HISTORY_REASON_EXIT_ACK":producer.DIAGNOSTIC_ACK}), patch.object(sys,"argv",argv), redirect_stdout(output):
+     self.assertEqual(producer.main(),20)
+    self.assertEqual(output.getvalue().strip(),"FINCEPT_F2_HISTORY_CAPTURE_UNAVAILABLE reason=ADAPTER_UNAVAILABLE")
+    self.assertEqual(prior.read_bytes(),b"prior")
+    self.assertEqual(len(calls),1)
+    self.assertEqual(calls[0][0],("EURUSD=X","6mo","1d"))
  def test_real_socket_request_claim(self):
   with tempfile.TemporaryDirectory() as td:
    root=Path(td)

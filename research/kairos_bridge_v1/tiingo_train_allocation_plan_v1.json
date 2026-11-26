@@ -1,0 +1,28 @@
+{
+  "schema": "FINCEPT_TIINGO_TRAIN_ALLOCATION_DIAGNOSTIC_V1",
+  "dataset_sha256": "072e3668589c0773dfeeb27f31c84bfce9611836fb7f747768e5b07e69ba9c0e",
+  "dataset_class": "DEVELOPMENT_CONTAMINATED",
+  "assets": [
+    "AAPL",
+    "JPM",
+    "XOM"
+  ],
+  "window": "2018",
+  "observations_per_asset": 251,
+  "return_observations": 250,
+  "price_basis": "RETROSPECTIVE_ADJUSTED_CLOSE",
+  "annualization": 252,
+  "risk_free_rate": 0.04,
+  "methods": [
+    "fixed_40_30_30",
+    "equal_weight",
+    "min_volatility",
+    "risk_parity",
+    "max_sharpe"
+  ],
+  "constraints": "LONG_ONLY_FULLY_INVESTED_NO_LEVERAGE",
+  "selection_authorized": false,
+  "scientific_claim": false,
+  "execution_authority": false,
+  "holdout_access": false
+}

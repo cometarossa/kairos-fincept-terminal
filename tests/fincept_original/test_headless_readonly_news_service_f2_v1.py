@@ -394,10 +394,11 @@ def test_actual_native_inbox_fresh_tamper_replay_and_absolute_expiry(native_bin)
             tmp.chmod(0o600)
             tmp.replace(directory / "snapshot.json")
 
-        def result():
+        def result(evidence=True):
             code, body = request(port, "POST", rpc("tools/call", 42,
                 {"name": "get_news", "arguments": {"category": "MARKETS",
-                 "time_range": "24H", "limit": 5, "include_publisher_datetime": True}}), bearer)
+                 "time_range": "24H", "limit": 5, "include_publisher_datetime": True,
+                 "include_local_snapshot_provenance": evidence}}), bearer)
             assert code == 200
             return body["result"]
 
@@ -437,10 +438,16 @@ def test_actual_native_inbox_fresh_tamper_replay_and_absolute_expiry(native_bin)
                 r = wait_for(True)
                 assert r["structuredContent"]["articles"][0]["headline"] == "Synthetic inbox QA"
                 assert r["structuredContent"]["articles"][0]["publisher_datetime_attested"] is False
+                assert r["structuredContent"]["local_snapshot_provenance"] == {
+                    "captured_at_unix": now - 593, "valid_until_unix": now + 7,
+                    "local_clock_verified": False, "market_as_of_verified": False}
                 wait_for(False)
                 fresh = snapshot(int(time.time()))
                 publish(fresh)
-                assert wait_for(True)["structuredContent"]["count"] == 1
+                content = wait_for(True)["structuredContent"]
+                assert content["count"] == 1
+                assert content["local_snapshot_provenance"]["captured_at_unix"] == fresh["captured_at_unix"]
+                assert "local_snapshot_provenance" not in result(False)["structuredContent"]
                 bad = dict(fresh, rss_sha256="0" * 64)
                 publish(bad)
                 assert "FINCEPT_UNAVAILABLE" in json.dumps(wait_for(False))
@@ -593,10 +600,11 @@ def test_original_history_inbox_native_valid_stale_and_wrong_symbol(native_bin, 
             with tmp.open("x") as f: json.dump(obj, f)
             tmp.chmod(0o600)
             tmp.replace(target / "snapshot.json")
-        def history(symbol="SPY", period="5d"):
+        def history(symbol="SPY", period="5d", evidence=True):
             code, body = request(port, "POST", rpc("tools/call", 9,
                 {"name": "get_history", "arguments": {"symbol": symbol,
-                    "period": period, "interval": "1d", "limit": 160 if period == "6mo" else 5}}), bearer)
+                    "period": period, "interval": "1d", "limit": 160 if period == "6mo" else 5,
+                    "include_local_snapshot_provenance": evidence}}), bearer)
             assert code == 200
             return body["result"]
         cmd = [native_bin, "--serve-readonly-news"]
@@ -626,6 +634,12 @@ def test_original_history_inbox_native_valid_stale_and_wrong_symbol(native_bin, 
                 data = result["structuredContent"]
                 assert data["symbol"] == "SPY" and data["count"] == 1
                 assert data["bars"][0]["close"] == 102
+                assert data["local_snapshot_provenance"] == {
+                    "captured_at_unix": now, "valid_until_unix": now + 900,
+                    "local_clock_verified": False, "market_as_of_verified": False}
+                assert "local_snapshot_provenance" not in history(evidence=False)["structuredContent"]
+                publish(captured=now-30)
+                assert history()["structuredContent"]["local_snapshot_provenance"]["valid_until_unix"] == now+870
                 assert history("AAPL")["isError"] and history(period="1mo")["isError"]
                 for symbol in ["EURUSD=X","GBPUSD=X","JPY=X","AUDUSD=X","CAD=X","^GSPC","^NDX","^GDAXI","AAPL","BTC-USD","GC=F"]:
                     publish(symbol=symbol)
@@ -659,6 +673,7 @@ def test_original_history_inbox_native_valid_stale_and_wrong_symbol(native_bin, 
                         data = result["structuredContent"]
                         assert data["symbol"] == symbol and data["period"] == "6mo" and data["count"] == 120
                         assert data["bars"][0]["timestamp"] == long_bars[0]["timestamp"]
+                        assert data["local_snapshot_provenance"]["valid_until_unix"] == now+86400
                     else:
                         assert result["isError"]
                 if long_window:
@@ -969,3 +984,14 @@ def test_original_quote_inbox_native(native_bin):
         receipt=output.read_text(errors="replace")
         assert child.returncode==0 and "FINCEPT_F2_READONLY_NEWS_STOPPED" in receipt
         assert bearer not in receipt
+
+
+def test_local_snapshot_provenance_is_opt_in_and_bound_to_decoded_capture():
+    market = (ROOT / "services/markets/MarketDataService.cpp").read_text()
+    tools = (ROOT / "mcp/tools/MarketsTools.cpp").read_text()
+    assert "point.readonly_snapshot_captured_at_unix = captured" in market
+    assert "inbox->expires_at() != before" in SOURCE
+    assert 'args.value("include_local_snapshot_provenance").toBool(false)' in SOURCE
+    assert 'args.value("include_local_snapshot_provenance").toBool(false)' in tools
+    assert "p.readonly_snapshot_captured_at_unix == captured" in tools
+    assert "captured <= now - ttl" in tools

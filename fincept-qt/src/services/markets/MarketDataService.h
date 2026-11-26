@@ -67,6 +67,8 @@ struct HistoryPoint {
     double low = 0;
     double close = 0;
     qint64 volume = 0;
+    // Set only by the validated F2 inbox; not an exchange as-of claim.
+    qint64 readonly_snapshot_captured_at_unix = 0;
 };
 
 struct TickerDef {

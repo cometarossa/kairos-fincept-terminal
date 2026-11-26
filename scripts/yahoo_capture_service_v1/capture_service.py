@@ -7,6 +7,7 @@ from capture_supervisor_candidate import Supervisor,run_child,SCOPE
 from public_quote_request_gate_v1 import safe_file
 
 ACK="FINCEPT_YAHOO_CAPTURE_SERVICE_V1"
+LONG_ACK="FINCEPT_YAHOO_LONG_HISTORY_REPLACEMENT_V1"
 ROOT=Path("/capture")
 CONTROL=Path("/control")
 REQUEST=Path("/request")
@@ -19,12 +20,13 @@ def private_dir(path):
     if not stat.S_ISDIR(s.st_mode) or s.st_uid!=os.geteuid() or stat.S_IMODE(s.st_mode)!=0o700:
         raise ValueError("UNSAFE_DIRECTORY")
 
-def child_env(port,lane):
+def child_env(port,lane,*,period="5d"):
+    if period not in ("5d","6mo") or (period=="6mo" and lane!="history"):raise ValueError("WINDOW_DENIED")
     url="http://127.0.0.1:"+str(port)
     env={"PATH":"/usr/local/bin:/usr/bin:/bin","HOME":"/tmp","XDG_CACHE_HOME":"/tmp","PYTHONDONTWRITEBYTECODE":"1",
          "HTTP_PROXY":url,"HTTPS_PROXY":url,"ALL_PROXY":url,"http_proxy":url,"https_proxy":url,"all_proxy":url,"NO_PROXY":"","no_proxy":""}
     if lane=="history":
-        env["FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK"]="MULTI_YAHOO_HISTORY_SNAPSHOT_V1"
+        env["FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK"]="DUAL_WINDOW_YAHOO_HISTORY_SNAPSHOT_V1" if period=="6mo" else "MULTI_YAHOO_HISTORY_SNAPSHOT_V1"
     elif lane=="quote":
         env["FINCEPT_PUBLIC_QUOTE_CAPTURE_ACK"]="PUBLIC_YAHOO_QUOTE_RESEARCH_V1"
         env["FINCEPT_PUBLIC_YAHOO_QUOTE_ACK"]="PUBLIC_YAHOO_QUOTE_RESEARCH_V1"
@@ -94,12 +96,15 @@ def main():
             listener.bind(str(path));os.chmod(path,0o600);listener.listen(2);listener.settimeout(.2)
             threads=[threading.Thread(target=s.serve_forever,daemon=True) for s in (history,quote)]
             for t in threads:t.start()
-            def worker(lane,symbol):
+            def worker(lane,symbol,period="5d"):
                 server=history if lane=="history" else quote
                 script="capture_public_yahoo_"+lane+"_f2_v1.py"
                 inbox=HISTORY if lane=="history" else QUOTES
-                return run_child([sys.executable,str(ROOT/"scripts"/script),"--inbox",str(inbox),"--symbol",symbol],child_env(server.server_address[1],lane),stop=stop)
-            supervisor=Supervisor(CONTROL,history_worker=lambda s:worker("history",s),quote_worker=lambda s:worker("quote",s))
+                argv=[sys.executable,str(ROOT/"scripts"/script),"--inbox",str(inbox),"--symbol",symbol]
+                if lane=="history":argv+=["--period",period]
+                return run_child(argv,child_env(server.server_address[1],lane,period=period),stop=stop)
+            long_enabled=os.environ.get("FINCEPT_YAHOO_LONG_HISTORY_ACK")==LONG_ACK
+            supervisor=Supervisor(CONTROL,history_worker=lambda s:worker("history",s),quote_worker=lambda s:worker("quote",s),long_history_worker=(lambda s:worker("history",s,"6mo")) if long_enabled else None)
             enabled=os.environ.get("FINCEPT_YAHOO_QUOTE_REQUEST_ACK")==SCOPE
             print("FINCEPT_CAPTURE_SUPERVISOR_READY",flush=True)
             try:

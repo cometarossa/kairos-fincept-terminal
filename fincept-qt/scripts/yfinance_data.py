@@ -1210,9 +1210,15 @@ def _research_raw_bar_failure(row):
     predicate remains identical to the original strict validator.
     """
     try:
-        values = [row[k] for k in ("Open", "High", "Low", "Close", "Volume")]
-        if any(isinstance(v, (bool,)) or pd.isna(v) for v in values):
-            return "MISSING_OR_BOOLEAN"
+        fields = ("Open", "High", "Low", "Close", "Volume")
+        values = [row[k] for k in fields]
+        for field, value in zip(fields, values):
+            # Preserve the original short-circuit admission predicate and
+            # report only a fixed field name and kind, never the cell.
+            if isinstance(value, (bool,)):
+                return "BOOLEAN_" + field.upper()
+            if pd.isna(value):
+                return "MISSING_" + field.upper()
         o, h, l, c, v = map(float, values)
         if not all(math.isfinite(n) for n in (o, h, l, c, v)):
             return "NONFINITE"

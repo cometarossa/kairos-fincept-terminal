@@ -104,7 +104,7 @@ def _int(value, default=None):
 
 
 def _strict_research_quote(symbol):
-    """One original yfinance info request, provider-claimed time, no fallback."""
+    """Raw pinned yfinance quote response, provider-claimed time, no fallback."""
     unavailable = {"error": "RESEARCH_QUOTE_UNAVAILABLE"}
     if (type(symbol) is not str or symbol not in ("SPY", "EURUSD=X")
             or os.environ.get("FINCEPT_PUBLIC_YAHOO_QUOTE_ACK") != "PUBLIC_YAHOO_QUOTE_RESEARCH_V1"):
@@ -112,7 +112,8 @@ def _strict_research_quote(symbol):
     try:
         import io, contextlib
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-            info = yf.Ticker(symbol).info
+            from fincept_raw_public_quote_v1 import fetch_raw_quote
+            info = fetch_raw_quote(symbol)
         if type(info) is not dict or info.get("symbol") != symbol:
             return unavailable
         received = int(datetime.now().timestamp())

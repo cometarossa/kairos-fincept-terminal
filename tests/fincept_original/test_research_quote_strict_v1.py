@@ -11,7 +11,10 @@ class StrictQuote(unittest.TestCase):
     spec=importlib.util.spec_from_file_location("quote_qa",SCRIPTS/"yfinance_data.py")
     cls.m=importlib.util.module_from_spec(spec)
     sys.path.insert(0,str(SCRIPTS))
-    try:spec.loader.exec_module(cls.m)
+    try:
+        import fincept_raw_public_quote_v1 as raw
+        cls.raw=raw
+        spec.loader.exec_module(cls.m)
     finally:sys.path.remove(str(SCRIPTS))
  @classmethod
  def tearDownClass(cls):
@@ -23,7 +26,7 @@ class StrictQuote(unittest.TestCase):
     env=patch.dict(os.environ,{"FINCEPT_PUBLIC_YAHOO_QUOTE_ACK":"PUBLIC_YAHOO_QUOTE_RESEARCH_V1"})
     env.start();self.addCleanup(env.stop)
  def call(self,**kw):
-    with patch.object(self.m.yf,"Ticker",return_value=types.SimpleNamespace(info={**self.info,**kw})) as t:
+    with patch.object(self.raw,"fetch_raw_quote",return_value={**self.info,**kw}) as t:
         r=self.m.get_quote("SPY",strict_research=True)
     t.assert_called_once_with("SPY");return r
  def test_valid(self):
@@ -38,16 +41,16 @@ class StrictQuote(unittest.TestCase):
     for k,v in (("regularMarketPrice",float("nan")),("regularMarketDayLow",101),("regularMarketVolume",None),("regularMarketVolume",1.5),("regularMarketVolume",True),("regularMarketPrice",0)):
         self.assertIn("error",self.call(**{k:v}))
  def test_no_opt_in(self):
-    with patch.dict(os.environ,{"FINCEPT_PUBLIC_YAHOO_QUOTE_ACK":""}),patch.object(self.m.yf,"Ticker") as t:
+    with patch.dict(os.environ,{"FINCEPT_PUBLIC_YAHOO_QUOTE_ACK":""}),patch.object(self.raw,"fetch_raw_quote") as t:
         self.assertIn("error",self.m.get_quote("SPY",strict_research=True));t.assert_not_called()
  def test_symbol_denied(self):
-    with patch.object(self.m.yf,"Ticker") as t:
+    with patch.object(self.raw,"fetch_raw_quote") as t:
         self.assertIn("error",self.m.get_quote("QQQ",strict_research=True));t.assert_not_called()
  def test_no_fallback(self):
-    with patch.object(self.m.yf,"Ticker",side_effect=RuntimeError("private provider text")) as t:
+    with patch.object(self.raw,"fetch_raw_quote",side_effect=RuntimeError("private provider text")) as t:
         self.assertEqual(self.m.get_quote("SPY",strict_research=True),{"error":"RESEARCH_QUOTE_UNAVAILABLE"});t.assert_called_once()
  def test_fx_zero_volume(self):
-    with patch.object(self.m.yf,"Ticker",return_value=types.SimpleNamespace(info={**self.info,"symbol":"EURUSD=X","regularMarketVolume":0})):
+    with patch.object(self.raw,"fetch_raw_quote",return_value={**self.info,"symbol":"EURUSD=X","regularMarketVolume":0}):
         self.assertEqual(self.m.get_quote("EURUSD=X",strict_research=True)["volume"],0)
  def test_legacy_unchanged(self):
     import pandas as pd

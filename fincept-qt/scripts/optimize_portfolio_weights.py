@@ -108,11 +108,41 @@ def fetch_price_data(symbols, period="1y"):
 
 # ── Core optimiser ────────────────────────────────────────────────────────────
 
+def _validate_moments(mean_ret, cov, n):
+    """Conservative numerical admission: strictly positive definite covariance."""
+    if type(n) is not int or n < 1:
+        raise ValueError("Invalid asset count")
+    mu, sigma = np.asarray(mean_ret), np.asarray(cov)
+    if (mu.shape != (n,) or sigma.shape != (n, n)
+            or mu.dtype.kind not in "fiu" or sigma.dtype.kind not in "fiu"
+            or not np.all(np.isfinite(mu)) or not np.all(np.isfinite(sigma))):
+        raise ValueError("Invalid portfolio moments")
+    mu, sigma = mu.astype(float), sigma.astype(float)
+    if not np.all(np.isfinite(mu)) or not np.all(np.isfinite(sigma)):
+        raise ValueError("Invalid portfolio moments")
+    scale = float(np.max(np.abs(sigma)))
+    if scale <= 0 or not np.allclose(sigma / scale, sigma.T / scale, rtol=0, atol=1e-12):
+        raise ValueError("Covariance must be symmetric and nonzero")
+    sigma = sigma * 0.5 + sigma.T * 0.5
+    eigenvalues = np.linalg.eigvalsh(sigma / scale)
+    if not np.all(np.isfinite(eigenvalues)) or eigenvalues[0] <= 1e-12:
+        raise ValueError("Singular or indefinite covariance; no implicit regularization")
+    return mu, sigma
+
+
 def build_params(returns_df):
-    """Return (mean_returns_annual, cov_annual, n) from a returns DataFrame."""
+    """Return annual sample moments from a complete, aligned return panel."""
+    if (not returns_df.index.is_unique or not returns_df.index.is_monotonic_increasing
+            or not returns_df.columns.is_unique or len(returns_df) < 2):
+        raise ValueError("Invalid return panel index or columns")
+    arr = returns_df.to_numpy()
+    if arr.dtype.kind not in "fiu" or not np.all(np.isfinite(arr)):
+        raise ValueError("Incomplete or nonnumeric return panel")
     mean_ret = returns_df.mean().values * 252
-    cov      = returns_df.cov().values * 252
-    return mean_ret, cov, len(mean_ret)
+    cov = returns_df.cov().values * 252
+    n = len(mean_ret)
+    mean_ret, cov = _validate_moments(mean_ret, cov, n)
+    return mean_ret, cov, n
 
 
 def run_strategy(strategy, mean_ret, cov, n, extra=None):
@@ -120,6 +150,10 @@ def run_strategy(strategy, mean_ret, cov, n, extra=None):
     Returns dict: {weights, return, volatility, sharpe} or {error}.
     weights is a numpy array of length n.
     """
+    try:
+        mean_ret, cov = _validate_moments(mean_ret, cov, n)
+    except (ValueError, TypeError, np.linalg.LinAlgError):
+        return {"error": "Invalid portfolio moments"}
     if extra is None:
         extra = {}
     RF = 0.04
@@ -199,15 +233,17 @@ def run_strategy(strategy, mean_ret, cov, n, extra=None):
                            options={"ftol": 1e-9, "maxiter": 1000})
 
         else:
-            # Fallback: equal weight
-            w = np.ones(n) / n
-            return _build_result(w, mean_ret, cov, strategy)
+            return {"error": "Unknown optimization strategy"}
 
         if not _valid_solution(res, n):
             return {"error": "Optimization failed or violated weight constraints"}
         result = _build_result(res.x, mean_ret, cov, strategy)
         if strategy == "target_return" and abs(result["return"] - tgt) > 1e-7:
             return {"error": "Optimization violated target return"}
+        if strategy == "risk_parity":
+            shares = risk_decomposition(result["weights"], cov)["percentage"] / 100.0
+            if np.max(np.abs(shares - 1.0 / n)) > 1e-4:
+                return {"error": "Risk parity contribution residual too large"}
         return result
 
     except Exception as exc:
@@ -232,13 +268,48 @@ def _build_result(weights, mean_ret, cov, strategy):
     r    = float(np.dot(w, mean_ret))
     v    = float(np.sqrt(max(np.dot(w, np.dot(cov, w)), 0.0)))
     sh   = float((r - RF) / v) if v > 1e-10 else 0.0
-    return {"weights": w, "return": r, "volatility": v, "sharpe": sh, "strategy": strategy}
+    if not np.all(np.isfinite([r, v, sh])) or v <= 1e-12:
+        raise ValueError("Invalid portfolio performance")
+    methodology = {"hrp": "INVERSE_VARIANCE_PROXY", "inv_var": "INVERSE_VARIANCE_PROXY",
+                   "black_litterman": "EQUILIBRIUM_PRIOR_NO_VIEWS"}.get(strategy, strategy.upper())
+    return {"weights": w, "return": r, "volatility": v, "sharpe": sh,
+            "strategy": strategy, "methodology": methodology}
+
+
+def risk_decomposition(weights, cov):
+    """Euler decomposition; negative hedge contributions are preserved."""
+    w = np.asarray(weights)
+    if w.ndim != 1 or w.dtype.kind not in "fiu":
+        raise ValueError("Invalid weights")
+    n = len(w)
+    _, cov = _validate_moments(np.zeros(n), cov, n)
+    if (not np.all(np.isfinite(w)) or np.any(w < 0) or np.any(w > 1)
+            or abs(float(w.sum()) - 1.0) > 1e-8):
+        raise ValueError("Invalid weights")
+    cov_w = cov @ w
+    var = float(w @ cov_w)
+    if not np.isfinite(var) or var <= 1e-24:
+        raise ValueError("Undefined portfolio risk")
+    vol = np.sqrt(var)
+    marginal = cov_w / vol
+    component = w * marginal
+    percentage = component / vol * 100.0
+    if not np.all(np.isfinite(percentage)) or abs(float(percentage.sum()) - 100.0) > 1e-7:
+        raise ValueError("Invalid risk decomposition")
+    return {"volatility": float(vol), "marginal": marginal, "component": component,
+            "percentage": percentage, "asset_volatility": np.sqrt(np.diag(cov))}
 
 
 # ── Efficient frontier ────────────────────────────────────────────────────────
 
 def build_frontier(mean_ret, cov, n, num_points=40):
     """Return list of {volatility, return, sharpe} frontier points."""
+    try:
+        mean_ret, cov = _validate_moments(mean_ret, cov, n)
+    except (ValueError, TypeError, np.linalg.LinAlgError):
+        return []
+    if type(num_points) is not int or not 2 <= num_points <= 1000:
+        return []
     from scipy.optimize import minimize
     RF = 0.04
 
@@ -358,7 +429,11 @@ def main():
         print(json.dumps({"error": "Insufficient price history (need ≥ 20 trading days)"}))
         return
 
-    mean_ret, cov, n = build_params(returns_df)
+    try:
+        mean_ret, cov, n = build_params(returns_df)
+    except (ValueError, TypeError, np.linalg.LinAlgError):
+        print(json.dumps({"error": "Invalid portfolio return panel or covariance"}))
+        return
 
     # ── Primary optimisation ──────────────────────────────────────────────────
     primary = run_strategy(strategy, mean_ret, cov, n, extra=params)
@@ -391,6 +466,7 @@ def main():
                     "return":     r["return"],
                     "volatility": r["volatility"],
                     "sharpe":     r["sharpe"],
+                    "methodology": r["methodology"],
                 }
         except Exception:
             pass
@@ -402,19 +478,15 @@ def main():
     marginal_risk = {}
     asset_volatility = {}
     try:
-        w_p = np.asarray(weights_arr, dtype=float)
-        sigma_p = float(np.sqrt(max(np.dot(w_p, np.dot(cov, w_p)), 0.0)))
-        cov_w = np.dot(cov, w_p)
-        mrc = cov_w / sigma_p if sigma_p > 1e-12 else np.zeros(n)
-        rc = w_p * mrc
-        diag = np.sqrt(np.clip(np.diag(cov), 0.0, None))
+        risk = risk_decomposition(weights_arr, cov)
         for i in range(n):
             sym = available[i]
-            asset_volatility[sym] = float(diag[i])               # annualised vol
-            marginal_risk[sym] = float(mrc[i])
-            risk_contributions[sym] = float(rc[i] / sigma_p * 100.0) if sigma_p > 1e-12 else 0.0
-    except Exception:
-        pass
+            asset_volatility[sym] = float(risk["asset_volatility"][i])
+            marginal_risk[sym] = float(risk["marginal"][i])
+            risk_contributions[sym] = float(risk["percentage"][i])
+    except (ValueError, TypeError, np.linalg.LinAlgError):
+        print(json.dumps({"error": "Invalid portfolio risk decomposition"}))
+        return
 
     # ── Black-Litterman market-implied equilibrium returns ────────────────────
     # π = δ · Σ · w_market, using the caller's current weights as the market
@@ -445,6 +517,7 @@ def main():
         "annual_volatility":      primary["volatility"],
         "sharpe_ratio":           primary["sharpe"],
         "strategy":               strategy,
+        "methodology":            primary["methodology"],
         "symbols":                available,
         "frontier":               frontier,
         "comparison":             comparison,

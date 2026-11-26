@@ -103,8 +103,55 @@ def _int(value, default=None):
         return default
 
 
-def get_quote(symbol):
-    """Fetch real-time quote for a single symbol"""
+def _strict_research_quote(symbol):
+    """Raw pinned yfinance quote response, provider-claimed time, no fallback."""
+    unavailable = {"error": "RESEARCH_QUOTE_UNAVAILABLE"}
+    if (type(symbol) is not str or symbol not in ("SPY", "EURUSD=X")
+            or os.environ.get("FINCEPT_PUBLIC_YAHOO_QUOTE_ACK") != "PUBLIC_YAHOO_QUOTE_RESEARCH_V1"):
+        return unavailable
+    try:
+        import io, contextlib
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            from fincept_raw_public_quote_v1 import fetch_raw_quote
+            info = fetch_raw_quote(symbol)
+        if type(info) is not dict or info.get("symbol") != symbol:
+            return unavailable
+        received = int(datetime.now().timestamp())
+        claimed = info.get("regularMarketTime")
+        if type(claimed) is not int or not 0 < claimed <= received or received - claimed > 900:
+            return unavailable
+        keys = ("regularMarketPrice", "regularMarketPreviousClose",
+                "regularMarketDayHigh", "regularMarketDayLow", "regularMarketVolume")
+        values = [info.get(k) for k in keys]
+        if any(type(v) not in (int, float) or not math.isfinite(v) for v in values):
+            return unavailable
+        price, previous, high, low, volume = values
+        if not 0 < low <= price <= high or previous <= 0 or not 0 <= volume <= 9007199254740991 or int(volume) != volume:
+            return unavailable
+        change = price - previous
+        pct = 100 * (change / previous)
+        if not math.isfinite(change) or not math.isfinite(pct):
+            return unavailable
+        return {"schema": "YAHOO_PROVIDER_CLAIMED_QUOTE_V1",
+                "provider": "Yahoo Finance via original yfinance",
+                "symbol": symbol, "price": price, "previous_close": previous,
+                "change": change, "change_percent": pct, "high": high,
+                "low": low, "volume": int(volume),
+                "provider_claimed_market_time_unix": claimed,
+                "local_received_at_unix": received,
+                "market_as_of_verified": False, "freshness_verified": False,
+                "research_only": True, "execution_authority": False,
+                "scientific_claim": False, "broker_calls": 0}
+    except Exception:
+        return unavailable
+
+
+def get_quote(symbol, *, strict_research=False):
+    """Fetch quote; strict research is explicit and never falls back."""
+    if strict_research is True:
+        return _strict_research_quote(symbol)
+    if strict_research is not False:
+        return {"error": "RESEARCH_QUOTE_UNAVAILABLE"}
     try:
         import io, contextlib
         ticker = yf.Ticker(symbol)

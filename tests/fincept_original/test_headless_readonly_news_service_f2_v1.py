@@ -856,3 +856,103 @@ def test_hourly_archive_offline_contract():
     result = subprocess.run([sys.executable, "-B", str(test), "-v"],
                             capture_output=True, text=True, timeout=30)
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_quote_original_cache_only_source():
+    markets = (ROOT / "services" / "markets" / "MarketDataService.cpp").read_text()
+    section = markets.split("void MarketDataService::fetch_quotes(", 1)[1].split("// Check if ALL requested symbols", 1)[0]
+    assert 'FINCEPT_READONLY_QUOTE_INGRESS_ACK' in SOURCE
+    assert 'tool.name != QLatin1String("get_quote")' in SOURCE
+    assert "readonly_quote::read(readonly_quote_inbox_" in section
+    assert "return; // No provider fallback." in section
+    assert 'args.size() != 1' in SOURCE
+
+
+def test_original_quote_inbox_native(native_bin):
+    import base64
+    import hashlib
+    with tempfile.TemporaryDirectory(prefix="fincept-f2-quote-", dir="/private/tmp" if sys.platform == "darwin" else None) as name:
+        home = Path(name)
+        bearer = private_profile(home)
+        inbox = home / "quote-ingress"
+        inbox.mkdir(mode=0o700)
+        (inbox / "SPY").mkdir(mode=0o700)
+        (inbox / "EURUSD=X").mkdir(mode=0o700)
+        port = port_for_test()
+        env = env_for(home, port)
+        env["FINCEPT_READONLY_QUOTE_INGRESS_ACK"] = "PUBLIC_YAHOO_QUOTE_RESEARCH_V1"
+        def publish(symbol="SPY", **changes):
+            now = int(time.time())
+            price, prev = 100.123456, 99.12
+            q = {"schema":"YAHOO_PROVIDER_CLAIMED_QUOTE_V1","provider":"Yahoo Finance via original yfinance",
+                 "symbol":symbol,"price":price,"previous_close":prev,"change":price-prev,
+                 "change_percent":100*((price-prev)/prev),"high":101,"low":98,"volume":1000,
+                 "provider_claimed_market_time_unix":now-10,"local_received_at_unix":now-1,
+                 "market_as_of_verified":False,"freshness_verified":False,"research_only":True,
+                 "execution_authority":False,"scientific_claim":False,"broker_calls":0}
+            q.update(changes)
+            raw = json.dumps(q,separators=(",",":")).encode()
+            envelope = {"schema":"YAHOO_QUOTE_SNAPSHOT_V1","provider":"Yahoo Finance via original yfinance",
+                        "symbol":symbol,"captured_at_unix":now,"quote_sha256":hashlib.sha256(raw).hexdigest(),
+                        "quote_base64":base64.b64encode(raw).decode()}
+            target=inbox/symbol/"snapshot.json"
+            tmp=target.with_name(".next")
+            tmp.write_text(json.dumps(envelope));tmp.chmod(0o600);tmp.replace(target)
+            return target
+        def quote(symbol="SPY", **extra):
+            code, body=request(port,"POST",rpc("tools/call",9,{"name":"get_quote","arguments":{"symbol":symbol,**extra}}),bearer)
+            assert code==200
+            return body["result"]
+        cmd=[native_bin,"--serve-readonly-news"]
+        if sys.platform=="darwin" and os.environ.get("FINCEPT_F2_MAC_SANDBOX_EGRESS_DENIED")=="1":
+            policy='(version 1) (allow default) (deny network-outbound (remote ip "*:*")) (allow network-outbound (remote ip "localhost:*"))'
+            cmd=["/usr/bin/sandbox-exec","-p",policy,*cmd]
+        output=home/"quote.log"
+        with output.open("w+") as log:
+            child=subprocess.Popen(cmd,env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
+            try:
+                deadline=time.monotonic()+15
+                while time.monotonic()<deadline:
+                    assert child.poll() is None
+                    try:
+                        if request(port,"GET")[0]==200:break
+                    except (OSError,TimeoutError,http.client.HTTPException):pass
+                    time.sleep(.1)
+                else:pytest.fail("quote service not ready")
+                code,body=request(port,"POST",rpc("tools/list"),bearer)
+                assert code==200 and {t["name"] for t in body["result"]["tools"]}=={"get_news","get_quote"}
+                assert quote()["isError"]
+                target=publish()
+                data=quote()["structuredContent"]
+                assert data["price"]==100.123456 and data["symbol"]=="SPY"
+                evidence=data["quote_provenance"]
+                assert evidence["delivery_origin"]=="unexpired_cache_hit"
+                assert evidence["market_as_of_utc"] is None and evidence["market_as_of_verified"] is False
+                assert evidence["provider_claimed_market_time_attested"] is False
+                assert evidence["provider_claimed_market_time_unix"]<=evidence["quote_snapshot_captured_at_unix"]
+                assert quote("AAPL")["isError"] and quote("../SPY")["isError"]
+                assert quote("SPY",force=True)["isError"]
+                assert quote("EURUSD=X")["isError"]
+                publish("EURUSD=X")
+                assert quote("EURUSD=X")["isError"] is False
+                publish(provider_claimed_market_time_unix=int(time.time())-901)
+                assert quote()["isError"]
+                publish(execution_authority=True)
+                assert quote()["isError"]
+                target=publish()
+                target.chmod(0o644)
+                assert quote()["isError"]
+                target.unlink()
+                target.symlink_to(inbox/"EURUSD=X"/"snapshot.json")
+                assert quote()["isError"]
+                publish()
+                assert quote()["isError"] is False
+            finally:
+                if child.poll() is None:
+                    child.send_signal(signal.SIGTERM)
+                    try:child.wait(timeout=8)
+                    except subprocess.TimeoutExpired:
+                        os.killpg(child.pid,signal.SIGKILL);child.wait(timeout=4)
+        receipt=output.read_text(errors="replace")
+        assert child.returncode==0 and "FINCEPT_F2_READONLY_NEWS_STOPPED" in receipt
+        assert bearer not in receipt

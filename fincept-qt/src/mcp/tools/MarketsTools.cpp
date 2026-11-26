@@ -81,7 +81,7 @@ std::vector<ToolDef> get_markets_tools() {
 
             // Delivery origin + local receipt clock are diagnostic only.
             // The provider's actual exchange as-of remains unverified.
-            const QJsonObject provenance{
+            QJsonObject provenance{
                 {"delivery_origin", QString::fromLatin1(services::quote_delivery_origin_name(q.delivery_origin))},
                 {"local_received_at_utc", q.local_received_at_utc.isEmpty()
                                               ? QJsonValue(QJsonValue::Null)
@@ -96,6 +96,11 @@ std::vector<ToolDef> get_markets_tools() {
                 {"execution_eligible", services::quote_execution_eligible(q.delivery_origin)},
                 {"scientific_claim", false},
             };
+            if (q.provider_claimed_market_time_unix > 0 && q.quote_snapshot_captured_at_unix > 0) {
+                provenance.insert("provider_claimed_market_time_unix", q.provider_claimed_market_time_unix);
+                provenance.insert("quote_snapshot_captured_at_unix", q.quote_snapshot_captured_at_unix);
+                provenance.insert("provider_claimed_market_time_attested", false);
+            }
             return ToolResult::ok_data(QJsonObject{{"symbol", q.symbol},
                                                    {"name", q.name},
                                                    {"price", q.price},

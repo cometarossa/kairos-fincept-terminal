@@ -1,5 +1,6 @@
 #include "services/markets/MarketDataService.h"
 #include "services/markets/HistoryIntegrity.h"
+#include "services/markets/ReadonlyQuoteInbox.h"
 #include <cstdio>
 
 #include "core/logging/Logger.h"
@@ -13,6 +14,7 @@
 
 #include <QCoreApplication>
 #include <QDateTime>
+#include <QTimeZone>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -461,7 +463,38 @@ void MarketDataService::ensure_registered_with_hub() {
 
 // ── Batched + Cached fetch_quotes ───────────────────────────────────────────
 
+bool MarketDataService::configure_readonly_quote_inbox(const QString& directory) {
+    if (!readonly_quote_inbox_.isEmpty() || !QCoreApplication::instance() ||
+        QCoreApplication::applicationName() != QLatin1String("FinceptReadonlyNews") ||
+        !QCoreApplication::arguments().contains(QStringLiteral("--serve-readonly-news")) ||
+        qgetenv("FINCEPT_READONLY_QUOTE_INGRESS_ACK") != "PUBLIC_YAHOO_QUOTE_RESEARCH_V1" ||
+        !QDir::isAbsolutePath(directory) || QDir(directory).canonicalPath() != directory)
+        return false;
+    readonly_quote_inbox_ = directory;
+    return true;
+}
+
 void MarketDataService::fetch_quotes(const QStringList& symbols, QuoteCallback cb) {
+    if (!readonly_quote_inbox_.isEmpty()) {
+        // Headless requests never consult SQLite, DataHub or PythonRunner.
+        if (symbols.size() != 1) { cb(false, {}); return; }
+        const auto obj = readonly_quote::read(readonly_quote_inbox_, symbols.first(), QDateTime::currentSecsSinceEpoch());
+        if (!obj) { cb(false, {}); return; }
+        QuoteData q;
+        q.symbol = symbols.first();
+        q.price = obj->value("price").toDouble();
+        q.change = obj->value("change").toDouble();
+        q.change_pct = obj->value("change_percent").toDouble();
+        q.high = obj->value("high").toDouble();
+        q.low = obj->value("low").toDouble();
+        q.volume = obj->value("volume").toDouble();
+        q.delivery_origin = QuoteDeliveryOrigin::UnexpiredCacheHit;
+        q.local_received_at_utc = QDateTime::fromSecsSinceEpoch(obj->value("local_received_at_unix").toInteger(), QTimeZone::UTC).toString(Qt::ISODateWithMs);
+        q.provider_claimed_market_time_unix = obj->value("provider_claimed_market_time_unix").toInteger();
+        q.quote_snapshot_captured_at_unix = obj->value("captured_at_unix").toInteger();
+        cb(true, {q});
+        return; // No provider fallback.
+    }
     if (symbols.isEmpty()) {
         cb(true, {});
         return;

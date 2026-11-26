@@ -6,6 +6,13 @@ from public_yahoo_shared_budget_v1 import SharedWindow
 from public_quote_request_gate_v1 import safe_file
 
 ACK="FINCEPT_YAHOO_DUAL_RELAY_V1"
+SCREENER_ACK="FINCEPT_YAHOO_SCREENER_RELAY_CANDIDATE_V1"
+
+def lanes_for(root,*,screener_enabled=False):
+    if type(screener_enabled) is not bool:raise ValueError("INVALID_OPT_IN")
+    lanes=("history","quote","screener") if screener_enabled else ("history","quote")
+    return [(root/(lane+".sock"),lane) for lane in lanes]
+
 def public_connect(address,timeout=7):
     host,port=address
     if host not in proxy.APPROVED or port!=443:raise OSError("destination denied")
@@ -36,14 +43,16 @@ def main():
     fd=os.open(root/"relay.lock",os.O_RDWR|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)
     try:
         safe_file(fd);fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
-        paths=[root/"history.sock",root/"quote.sock"]
+        enabled=os.environ.get("FINCEPT_YAHOO_SCREENER_RELAY_ACK")==SCREENER_ACK
+        lanes=lanes_for(root,screener_enabled=enabled)
+        paths=[path for path,_ in lanes]
         if any(os.path.lexists(p) for p in paths):return 2
         stop=threading.Event()
         for sig in (signal.SIGTERM,signal.SIGINT):signal.signal(sig,lambda *_:stop.set())
-        budget=SharedWindow()
+        budget=SharedWindow(screener_enabled=enabled)
         servers=[]
         try:
-            for path,lane in zip(paths,("history","quote")):
+            for path,lane in lanes:
                 srv=Server(path,lane,budget);servers.append(srv);os.chmod(path,0o600)
             print("FINCEPT_DUAL_RELAY_READY_COOLDOWN_600",flush=True)
             while not stop.is_set():

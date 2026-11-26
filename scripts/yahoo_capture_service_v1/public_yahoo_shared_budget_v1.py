@@ -16,8 +16,16 @@ class SharedWindow:
     WINDOW = 600
     TOTAL = 8
     QUOTES = 2
+    # Candidate only: four history and two quote admissions reserved while
+    # screener admissions remain in the sliding window. This cannot guarantee
+    # unchanged capacity for every possible future history burst.
+    SCREENER = 2
+    HISTORY_FLOOR = 4
 
-    def __init__(self, *, clock=time.monotonic):
+    def __init__(self, *, clock=time.monotonic, screener_enabled=False):
+        if type(screener_enabled) is not bool:
+            raise ValueError("INVALID_SCREENER_OPT_IN")
+        self._screener_enabled = screener_enabled
         self._clock = clock
         self._lock = threading.Lock()
         self._events = collections.deque()
@@ -31,7 +39,8 @@ class SharedWindow:
         return value
 
     def admit(self, lane):
-        if type(lane) is not str or lane not in ("history", "quote"):
+        if type(lane) is not str or (lane not in ("history", "quote")
+                and not (self._screener_enabled and lane == "screener")):
             return False
         with self._lock:
             try:
@@ -50,5 +59,17 @@ class SharedWindow:
                 return False
             if lane == "quote" and sum(event[1] == "quote" for event in self._events) >= self.QUOTES:
                 return False
+            if self._screener_enabled:
+                counts = collections.Counter(event[1] for event in self._events)
+                counts[lane] += 1
+                if counts["screener"] > self.SCREENER:
+                    return False
+                # Preserve unused reserved capacity for existing lanes, only
+                # while a screener admission is present. No independent ledger.
+                if counts["screener"]:
+                    reserved = max(0, self.HISTORY_FLOOR - counts["history"])
+                    reserved += max(0, self.QUOTES - counts["quote"])
+                    if len(self._events) + 1 + reserved > self.TOTAL:
+                        return False
             self._events.append((now,lane))
             return True

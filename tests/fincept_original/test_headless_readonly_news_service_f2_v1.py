@@ -808,6 +808,9 @@ def test_six_month_capture_actual_publish_with_mocked_original_adapter(tmp_path,
     ("empty", "EMPTY_HISTORY"),
     ("raw", "RAW_INVALID_BAR"),
     ("raw_order", "RAW_INVALID_BAR_OHLC_ORDER"),
+    ("raw_missing", "RAW_INVALID_BAR_MISSING_VOLUME"),
+    ("raw_boolean", "RAW_INVALID_BAR_BOOLEAN_CLOSE"),
+    ("raw_unknown_field", "RAW_INVALID_BAR"),
     ("raw_private", "RAW_INVALID_BAR"),
     ("count", "INVALID_COUNT"),
     ("provider", "ADAPTER_UNAVAILABLE"),
@@ -836,6 +839,10 @@ def test_history_capture_diagnostic_is_bounded_and_preserves_prior_snapshot(tmp_
         if failure == "raw": return {"error": "RESEARCH_RAW_INVALID_BAR"}
         if failure == "raw_order":
             return {"error": "RESEARCH_RAW_INVALID_BAR", "raw_bar_failure_class": "OHLC_ORDER"}
+        if failure in ("raw_missing", "raw_boolean", "raw_unknown_field"):
+            detail = {"raw_missing": "MISSING_VOLUME", "raw_boolean": "BOOLEAN_CLOSE",
+                      "raw_unknown_field": "MISSING_PRIVATE_PROVIDER_FIELD"}[failure]
+            return {"error": "RESEARCH_RAW_INVALID_BAR", "raw_bar_failure_class": detail}
         if failure == "raw_private":
             return {"error": "RESEARCH_RAW_INVALID_BAR", "raw_bar_failure_class": "PRIVATE_PROVIDER_MESSAGE secret=not-for-logs"}
         if failure == "count": return rows[:99]

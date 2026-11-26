@@ -171,7 +171,7 @@ class OriginalProviderHistoryConversion(unittest.TestCase):
     def test_fixed_raw_failure_classes_preserve_strict_rejection(self):
         idx = pd.DatetimeIndex(["2024-01-02", "2024-01-03"], tz="UTC")
         cases = [
-            ("Volume", float("nan"), "MISSING_OR_BOOLEAN"),
+            ("Volume", float("nan"), "MISSING_VOLUME"),
             ("Close", float("inf"), "NONFINITE"),
             ("Low", 0, "NONPOSITIVE_PRICE"),
             ("Low", 2, "OHLC_ORDER"),
@@ -192,6 +192,30 @@ class OriginalProviderHistoryConversion(unittest.TestCase):
                 self.assertEqual(detailed, {"error": "RESEARCH_RAW_INVALID_BAR",
                                             "raw_bar_failure_class": reason})
                 self.assertNotIn("PRIVATE_PROVIDER_VALUE", json.dumps(detailed))
+
+    def test_missing_and_boolean_field_diagnostic_all_ohlcv(self):
+        idx = pd.DatetimeIndex(["2024-01-02", "2024-01-03"], tz="UTC")
+        good = {"Open": 100.0, "High": 103.0, "Low": 99.0, "Close": 102.0, "Volume": 1000}
+        for field in good:
+            for value, kind in ((None, "MISSING"), (float("nan"), "MISSING"),
+                                (pd.NA, "MISSING"), (True, "BOOLEAN"), (False, "BOOLEAN")):
+                # Object dtype deliberately preserves the Python boolean instead
+                # of silently converting it to a numeric column.
+                frame = pd.DataFrame([good, dict(good, **{field: value})], index=idx, dtype=object)
+                with self.subTest(field=field, kind=kind), patch.object(
+                        self.module.yf, "Ticker", return_value=types.SimpleNamespace(history=lambda **_: frame)):
+                    self.assertEqual(self.module.get_historical_period("SPY", "5d", "1d", strict_research=True),
+                                     {"error": "RESEARCH_RAW_INVALID_BAR"})
+                    self.assertEqual(self.module.get_historical_period(
+                        "SPY", "5d", "1d", strict_research=True, diagnose_research_raw_bar=True),
+                        {"error": "RESEARCH_RAW_INVALID_BAR", "raw_bar_failure_class": kind+"_"+field.upper()})
+
+    def test_diagnostic_first_bad_cell_and_missing_column(self):
+        row = {"Open": 100.0, "High": 103.0, "Low": 99.0, "Close": 102.0, "Volume": 1000}
+        self.assertEqual(self.module._research_raw_bar_failure(dict(row, Open=None, Volume=True)), "MISSING_OPEN")
+        self.assertEqual(self.module._research_raw_bar_failure(dict(row, Open=True, Close=None)), "BOOLEAN_OPEN")
+        del row["Close"]
+        self.assertEqual(self.module._research_raw_bar_failure(row), "CELL_CONVERSION")
 
     def test_diagnostic_opt_in_requires_strict_before_provider(self):
         with patch.object(self.module.yf, "Ticker") as ticker:

@@ -419,7 +419,12 @@ jobs:
           fincept-original-f2-readonly-qa:ci \
           /usr/bin/python3 -m pytest -q -p no:cacheprovider \
           tests/fincept_original/test_headless_readonly_news_service_f2_v1.py \
-          tests/fincept_original/test_two_year_yahoo_archive_v1.py
+          tests/fincept_original/test_two_year_yahoo_archive_v1.py \
+          tests/fincept_original/test_capture_supervisor_candidate.py \
+          tests/fincept_original/test_public_quote_request_gate_v1.py \
+          tests/fincept_original/test_public_yahoo_shared_budget_v1.py \
+          tests/fincept_original/test_yahoo_capture_service_v1.py \
+          tests/fincept_original/test_yahoo_dual_relay_v1.py
         echo "FINCEPT_ORIGINAL_LINUX_F2_NEWS_READONLY_LIFECYCLE_PASS broker_calls=0 external_egress=false"
 
     - name: Upload artifact

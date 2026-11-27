@@ -464,6 +464,9 @@ jobs:
           cmp "$GITHUB_WORKSPACE/fincept-qt/scripts/$name" "$staged/$name"
           sha256sum "$staged/$name"
         done
+        # AppImage extraction creates mode 0700 directories owned by the runner.
+        # Allow traversal of the private, directly bind-mounted test directory only.
+        chmod 0755 "$staged"
         # Public dependency downloads only during image build; tests have no network.
         docker build -t fincept-fx-adjustment-qa:ci - <<'DOCKERFILE'
         FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf
@@ -478,8 +481,7 @@ jobs:
           --mount "type=bind,src=$staged,dst=/qa-scripts,readonly" \
           --env HOME=/tmp --env PYTHONDONTWRITEBYTECODE=1 \
           --env PYTHONPATH=/qa-scripts:/work/repo/scripts:/work/repo/scripts/yahoo_capture_service_v1 \
-          fincept-fx-adjustment-qa:ci python3 -m unittest discover \
-          -s tests/fincept_original -p test_fx_adjustment_diagnostic_integration_v1.py -v
+          fincept-fx-adjustment-qa:ci python3 -c 'import pathlib, unittest, yfinance_data, fincept_json, fx_adjustment_observer_v1, fx_adjustment_origin_v1; mods=(yfinance_data,fincept_json,fx_adjustment_observer_v1,fx_adjustment_origin_v1); assert all(pathlib.Path(m.__file__).parent==pathlib.Path("/qa-scripts") for m in mods); print("PACKAGED_MODULE_PATHS_PASS",flush=True); suite=unittest.defaultTestLoader.discover("tests/fincept_original",pattern="test_fx_adjustment_diagnostic_integration_v1.py"); r=unittest.TextTestRunner(verbosity=2).run(suite); raise SystemExit(0 if r.wasSuccessful() and r.testsRun==8 else 1)'
         echo "FINCEPT_PACKAGED_FX_ADJUSTMENT_QA_PASS"
 
     - name: Upload artifact

@@ -6,6 +6,10 @@ Refuse incomplete/ambiguous results instead of erasing original warnings.
 import math
 import re
 
+MIXED_TIME_WARNING = (
+    "Quote timestamps differ across rows; as_of is the latest reported quote time, "
+    "not a common market snapshot."
+)
 SYMBOL = re.compile(r"[A-Z0-9.^=_-]{1,32}\Z", re.ASCII)
 
 
@@ -14,7 +18,7 @@ def project(raw, *, now):
             or raw.get('source') != 'Yahoo Finance screener'
             or raw.get('kind') != 'predefined' or raw.get('screen_id') != 'day_gainers'
             or type(raw.get('offset')) is not int or raw['offset'] != 0
-            or raw.get('warnings') != []):
+            or type(raw.get('warnings')) is not list):
         raise ValueError('SCREENER_UNAVAILABLE')
     count, total, cap = (raw.get(k) for k in ('count', 'total', 'fetched_at'))
     if (any(type(x) is not int for x in (count, total, cap))
@@ -37,6 +41,17 @@ def project(raw, *, now):
             raise ValueError('SCREENER_UNAVAILABLE')
         seen.add(symbol)
         rows.append(dict(symbol=symbol, price=price, currency=ccy, market_time=stamp, delay_min=delay))
+    # The v1 receipt already retains every row timestamp and explicitly denies
+    # a verified common market snapshot. Admit ONLY the exact original
+    # heterogeneous-clock warning, and independently corroborate it.
+    times = {row['market_time'] for row in rows}
+    warnings = raw['warnings']
+    if len(times) > 1:
+        if warnings != [MIXED_TIME_WARNING] or type(raw.get('as_of')) is not int or raw['as_of'] != max(times):
+            raise ValueError('SCREENER_UNAVAILABLE')
+    elif warnings != [] or ('as_of' in raw and
+                            (type(raw['as_of']) is not int or raw['as_of'] != max(times))):
+        raise ValueError('SCREENER_UNAVAILABLE')
     return dict(schema='FINCEPT_SCREENER_SNAPSHOT_V1', source=raw['source'], screen_id=raw['screen_id'],
                 count=count, total=total, captured_at_unix=cap, valid_until_unix=cap+600, rows=rows,
                 research_only=True, market_as_of_verified=False, scientific_claim=False,

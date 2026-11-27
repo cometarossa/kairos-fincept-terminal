@@ -48,6 +48,7 @@ REASONS = frozenset({
     "RAW_INVALID_BAR_VOLUME_FRACTIONAL", "RAW_INVALID_BAR_CELL_CONVERSION",
     "INVALID_OHLC", "INVALID_VOLUME", "INSUFFICIENT_SPAN", "STALE_HISTORY",
     "OVERSIZED_BARS", "PUBLICATION_REJECTED", "INTERNAL_FAILURE",
+    "RAW_INVALID_BAR_PRE_ADJUSTMENT_OHLC_ORDER", "RAW_INVALID_BAR_ADJUSTMENT_STAGE_OHLC_ORDER",
 })
 
 
@@ -89,7 +90,9 @@ REASON_EXIT_CODES = {
     "STALE_HISTORY": 52,
     "SYMBOL_DENIED": 53,
     "UNSAFE_DIRECTORY": 54,
-    "WINDOW_DENIED": 55
+    "WINDOW_DENIED": 55,
+    "RAW_INVALID_BAR_PRE_ADJUSTMENT_OHLC_ORDER": 56,
+    "RAW_INVALID_BAR_ADJUSTMENT_STAGE_OHLC_ORDER": 57
 }
 
 
@@ -196,8 +199,12 @@ def capture(directory: Path, symbol: str = "SPY", period: str = "5d") -> None:
         try:
             import yfinance_data as original
             original._NET_TIMEOUT = 6.0
-            rows = original.get_historical_period(
-                symbol, period, "1d", strict_research=True, diagnose_research_raw_bar=True)
+            diagnostic = (symbol == "EURUSD=X" and period == "6mo" and
+                          os.environ.get("FINCEPT_FX_ADJUSTMENT_DIAGNOSTIC_ACK") == "FINCEPT_FX_ADJUSTMENT_ORIGIN_V1")
+            kwargs = {"strict_research": True, "diagnose_research_raw_bar": True}
+            if diagnostic:
+                kwargs["diagnose_adjustment_origin"] = True
+            rows = original.get_historical_period(symbol, period, "1d", **kwargs)
         except Exception:
             raise CaptureRejected("ADAPTER_UNAVAILABLE", "original adapter unavailable") from None
         if type(rows) is dict and rows.get("error") == "RESEARCH_RAW_INVALID_BAR":
@@ -207,6 +214,10 @@ def capture(directory: Path, symbol: str = "SPY", period: str = "5d") -> None:
                 candidate = "RAW_INVALID_BAR_" + detail
                 if candidate in REASONS:
                     reason = candidate
+            if diagnostic and reason == "RAW_INVALID_BAR_OHLC_ORDER":
+                origin = rows.get("adjustment_origin")
+                if type(origin) is str and origin in ("PRE_ADJUSTMENT_OHLC_ORDER", "ADJUSTMENT_STAGE_OHLC_ORDER"):
+                    reason = "RAW_INVALID_BAR_" + origin
             raise CaptureRejected(reason, "invalid unrounded provider bar")
         if type(rows) is dict and "error" in rows:
             raise CaptureRejected("ADAPTER_UNAVAILABLE", "original adapter returned an error")

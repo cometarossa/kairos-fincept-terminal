@@ -54,7 +54,10 @@ HISTORY_EXIT_REASONS = {
 def history_diagnostic(symbol, period, code):
     if symbol not in ("SPY","EURUSD=X") or period not in ("5d","6mo") or type(code) is not int or code == 0:
         return None
-    return "HISTORY_CAPTURE_DIAGNOSTIC symbol="+symbol+" period="+period+" reason="+HISTORY_EXIT_REASONS.get(code,"CHILD_UNAVAILABLE_UNCLASSIFIED")
+    reason=HISTORY_EXIT_REASONS.get(code,"CHILD_UNAVAILABLE_UNCLASSIFIED")
+    if code in (56,57) and (symbol,period)!=("EURUSD=X","6mo"):
+        reason="CHILD_UNAVAILABLE_UNCLASSIFIED"
+    return "HISTORY_CAPTURE_DIAGNOSTIC symbol="+symbol+" period="+period+" reason="+reason
 
 ROOT=Path("/capture")
 CONTROL=Path("/control")

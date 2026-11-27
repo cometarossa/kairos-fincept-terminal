@@ -40,6 +40,13 @@ class Tests(unittest.TestCase):
   self.assertEqual(history_diagnostic("SPY","5d",1),"HISTORY_CAPTURE_DIAGNOSTIC symbol=SPY period=5d reason=CHILD_UNAVAILABLE_UNCLASSIFIED")
   self.assertEqual(child_env(10001,"history")["FINCEPT_HISTORY_REASON_EXIT_ACK"],producer.DIAGNOSTIC_ACK)
   self.assertNotIn("FINCEPT_HISTORY_REASON_EXIT_ACK",child_env(10002,"quote"))
+ def test_adjustment_origin_exit_codes_scope(self):
+  for symbol in ("SPY","EURUSD=X"):
+   for period in ("5d","6mo"):
+    for code in (56,57):
+     with self.subTest(symbol=symbol,period=period,code=code):
+      expected=HISTORY_EXIT_REASONS[code] if (symbol,period)==("EURUSD=X","6mo") else "CHILD_UNAVAILABLE_UNCLASSIFIED"
+      self.assertEqual(history_diagnostic(symbol,period,code),"HISTORY_CAPTURE_DIAGNOSTIC symbol="+symbol+" period="+period+" reason="+expected)
  def test_adapter_error_envelope_is_not_invalid_count(self):
   import types
   from contextlib import redirect_stdout

@@ -41,11 +41,16 @@ class Test(unittest.TestCase):
     def test_failure_no_retry(self):
         self.assertEqual(self.invoke("failure"),("CAPTURE_UNAVAILABLE",["get"]))
         self.assertFalse(self.target.exists())
-    def test_mixed_preserves_previous(self):
-        self.assertEqual(self.invoke()[0],"PUBLISHED");old=self.target.read_bytes()
+    def test_mixed_preserves_distinct_times(self):
+        self.assertEqual(self.invoke()[0],"PUBLISHED")
         self.now+=1
-        self.assertEqual(self.invoke("mixed")[0],"DENIED")
-        self.assertEqual(self.target.read_bytes(),old)
+        self.assertEqual(self.invoke("mixed")[0],"PUBLISHED")
+        import json,base64
+        raw=json.loads(base64.b64decode(json.loads(self.target.read_bytes())["payload_base64"]))
+        self.assertEqual([x["market_time"] for x in raw["rows"]],[self.now-10,self.now-11])
+        self.assertIs(raw["market_as_of_verified"],False)
+        self.assertNotIn("as_of",raw)
+        self.assertIs(raw["execution_authority"],False)
     def test_clock_regression(self):
         stamps=iter((self.now,self.now-1))
         self.assertEqual(self.invoke(clock=lambda:next(stamps))[0],"CLOCK_DENIED")

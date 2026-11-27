@@ -434,6 +434,7 @@ jobs:
           tests/fincept_original/test_yahoo_capture_service_v1.py \
           tests/fincept_original/test_yahoo_dual_relay_v1.py \
           tests/fincept_original/test_screener_budget_candidate.py \
+          tests/fincept_original/test_screener_mixed_time_candidate.py \
           tests/fincept_original/test_screener_capture_candidate.py \
           tests/fincept_original/test_screener_publication_candidate.py \
           tests/fincept_original/test_screener_relay_candidate.py \

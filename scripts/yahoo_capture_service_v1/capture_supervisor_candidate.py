@@ -3,7 +3,7 @@ Offline lab; no listener, scheduling daemon, or production admission here.
 """
 import fcntl,os,signal,subprocess,time,stat
 from pathlib import Path
-from public_quote_request_gate_v1 import dispatch,SCOPE,safe_file
+from public_quote_request_gate_v1 import dispatch,SCOPE,safe_file,dispatch_screener,SCREENER_SCOPE
 
 SYMBOLS=("SPY","EURUSD=X")
 MAX_SECONDS=45
@@ -13,11 +13,12 @@ HISTORY_GUARD=55
 LONG_HISTORY_SLOTS=frozenset({2,7})
 HISTORY_CYCLE=144
 class Supervisor:
-    def __init__(self,root,*,history_worker,quote_worker,long_history_worker=None,mono=time.monotonic,wall=time.time):
+    def __init__(self,root,*,history_worker,quote_worker,long_history_worker=None,screener_worker=None,mono=time.monotonic,wall=time.time):
         self.root=Path(root)
         self.history_worker=history_worker
         self.long_history_worker=long_history_worker
         self.quote_worker=quote_worker
+        self.screener_worker=screener_worker
         self.mono=mono
         self.wall=wall
         self.next_history=mono()+300
@@ -52,6 +53,16 @@ class Supervisor:
             if self.next_history-self.mono()<=HISTORY_GUARD:return 1
             return self.quote_worker(symbol)
         return dispatch(raw,self.root,scope=scope,worker=worker,clock=self.wall)
+
+    def screener(self,raw,*,scope=None):
+        if type(scope) is not str or scope!=SCREENER_SCOPE or not callable(self.screener_worker):
+            return "DISABLED"
+        if self.next_history-self.mono()<=HISTORY_GUARD:return "HISTORY_PRIORITY"
+        def worker(screen_id):
+            if self.next_history-self.mono()<=HISTORY_GUARD:return 1
+            return self.screener_worker(screen_id)
+        # One durable on-demand claim shared with quote; no refund on failure.
+        return dispatch_screener(raw,self.root,scope=scope,worker=worker,clock=self.wall)
 
 def run_child(argv,env,*,stop,timeout=MAX_SECONDS):
     """Bound and reap the sole child group. Caller supplies fixed trusted argv/env."""

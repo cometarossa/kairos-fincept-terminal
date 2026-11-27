@@ -3,8 +3,9 @@ Host admission must supply fixed private mounts and a separately reviewed relay.
 """
 import errno,fcntl,json,os,select,signal,socket,socketserver,stat,sys,threading,time
 from pathlib import Path
-from capture_supervisor_candidate import Supervisor,run_child,SCOPE
-from public_quote_request_gate_v1 import safe_file
+from contextlib import ExitStack
+from capture_supervisor_candidate import Supervisor,run_child,SCOPE,SCREENER_SCOPE
+from public_quote_request_gate_v1 import safe_file,unique
 
 ACK="FINCEPT_YAHOO_CAPTURE_SERVICE_V1"
 LONG_ACK="FINCEPT_YAHOO_LONG_HISTORY_REPLACEMENT_V1"
@@ -58,6 +59,7 @@ CONTROL=Path("/control")
 REQUEST=Path("/request")
 HISTORY=Path("/inbox")
 QUOTES=Path("/quote-inbox")
+SCREENS=Path("/screener-inbox")
 RELAY=Path("/relay")
 
 def private_dir(path):
@@ -76,6 +78,8 @@ def child_env(port,lane,*,period="5d"):
     elif lane=="quote":
         env["FINCEPT_PUBLIC_QUOTE_CAPTURE_ACK"]="PUBLIC_YAHOO_QUOTE_RESEARCH_V1"
         env["FINCEPT_PUBLIC_YAHOO_QUOTE_ACK"]="PUBLIC_YAHOO_QUOTE_RESEARCH_V1"
+    elif lane=="screener":
+        env["FINCEPT_PUBLIC_SCREENER_CAPTURE_ACK"]="FINCEPT_SCREENER_CAPTURE_CANDIDATE_V1"
     else:raise ValueError("LANE_DENIED")
     return env
 
@@ -104,7 +108,7 @@ class LocalRelay(socketserver.ThreadingMixIn,socketserver.TCPServer):
         self.relay_path=path
         super().__init__(("127.0.0.1",0),Relay)
 
-def serve_request(conn,supervisor,*,enabled):
+def serve_request(conn,supervisor,*,enabled,screener_enabled=False):
     deadline=time.monotonic()+1
     try:
         chunks=bytearray()
@@ -115,7 +119,14 @@ def serve_request(conn,supervisor,*,enabled):
             part=conn.recv(513-len(chunks))
             if not part:break
             chunks.extend(part)
-        result=supervisor.quote(bytes(chunks),scope=SCOPE if enabled else None)
+        raw=bytes(chunks)
+        try:
+            request=json.loads(raw,object_pairs_hook=unique) if len(raw)<=512 else None
+        except (ValueError,UnicodeError,RecursionError):request=None
+        if type(request) is dict and request.get("scope")==SCREENER_SCOPE:
+            result=supervisor.screener(raw,scope=SCREENER_SCOPE if screener_enabled else None)
+        else:
+            result=supervisor.quote(raw,scope=SCOPE if enabled else None)
         conn.sendall((result+"\n").encode("ascii"))
     except (OSError,ValueError):return
 
@@ -133,14 +144,24 @@ def main():
     os.umask(0o077)
     private_dir(CONTROL);private_dir(REQUEST);private_dir(HISTORY);private_dir(QUOTES)
     for sym in ("SPY","EURUSD=X"):private_dir(QUOTES/sym)
+    screener_enabled=os.environ.get("FINCEPT_YAHOO_SCREENER_REQUEST_ACK")==SCREENER_SCOPE
+    if screener_enabled:
+        private_dir(SCREENS)
+        st=(RELAY/"screener.sock").lstat()
+        if not stat.S_ISSOCK(st.st_mode) or st.st_uid!=os.geteuid() or stat.S_IMODE(st.st_mode)!=0o600:return 2
     fd=os.open(CONTROL/"supervisor.lock",os.O_RDWR|os.O_NOFOLLOW|os.O_NONBLOCK|os.O_CLOEXEC)
     try:
         safe_file(fd);fcntl.flock(fd,fcntl.LOCK_EX|fcntl.LOCK_NB)
         path=REQUEST/"request.sock"
         if os.path.lexists(path):return 2
-        with LocalRelay(RELAY/"history.sock") as history,LocalRelay(RELAY/"quote.sock") as quote,socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as listener:
+        with ExitStack() as stack:
+            history=stack.enter_context(LocalRelay(RELAY/"history.sock"))
+            quote=stack.enter_context(LocalRelay(RELAY/"quote.sock"))
+            screener=stack.enter_context(LocalRelay(RELAY/"screener.sock")) if screener_enabled else None
+            listener=stack.enter_context(socket.socket(socket.AF_UNIX,socket.SOCK_STREAM))
+            relays=(history,quote) if screener is None else (history,quote,screener)
             listener.bind(str(path));os.chmod(path,0o600);listener.listen(2);listener.settimeout(.2)
-            threads=[threading.Thread(target=s.serve_forever,daemon=True) for s in (history,quote)]
+            threads=[threading.Thread(target=s.serve_forever,daemon=True) for s in relays]
             for t in threads:t.start()
             def worker(lane,symbol,period="5d"):
                 server=history if lane=="history" else quote
@@ -153,8 +174,12 @@ def main():
                     message=history_diagnostic(symbol,period,code)
                     if message is not None:print(message,flush=True)
                 return code
+            def screen_worker(screen_id):
+                if screen_id!="day_gainers" or screener is None:return 1
+                argv=[sys.executable,str(ROOT/"scripts"/"capture_public_yahoo_screener_f2_v1.py")]
+                return run_child(argv,child_env(screener.server_address[1],"screener"),stop=stop)
             long_enabled=os.environ.get("FINCEPT_YAHOO_LONG_HISTORY_ACK")==LONG_ACK
-            supervisor=Supervisor(CONTROL,history_worker=lambda s:worker("history",s),quote_worker=lambda s:worker("quote",s),long_history_worker=(lambda s:worker("history",s,"6mo")) if long_enabled else None)
+            supervisor=Supervisor(CONTROL,history_worker=lambda s:worker("history",s),quote_worker=lambda s:worker("quote",s),long_history_worker=(lambda s:worker("history",s,"6mo")) if long_enabled else None,screener_worker=screen_worker if screener_enabled else None)
             enabled=os.environ.get("FINCEPT_YAHOO_QUOTE_REQUEST_ACK")==SCOPE
             print("FINCEPT_CAPTURE_SUPERVISOR_READY",flush=True)
             try:
@@ -164,9 +189,9 @@ def main():
                     try:conn,_=listener.accept()
                     except socket.timeout:continue
                     with conn:
-                        if not stop.is_set():serve_request(conn,supervisor,enabled=enabled)
+                        if not stop.is_set():serve_request(conn,supervisor,enabled=enabled,screener_enabled=screener_enabled)
             finally:
-                for s in (history,quote):s.shutdown()
+                for s in relays:s.shutdown()
                 path.unlink()
                 print("FINCEPT_CAPTURE_SUPERVISOR_STOPPED",flush=True)
     finally:os.close(fd)

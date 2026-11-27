@@ -444,6 +444,44 @@ jobs:
           tests/fincept_original/test_original_screener_response_integrity_v1.py
         echo "FINCEPT_ORIGINAL_LINUX_F2_NEWS_READONLY_LIFECYCLE_PASS broker_calls=0 external_egress=false"
 
+    - name: Packaged FX adjustment diagnostic integration (offline)
+      if: runner.os == 'Linux'
+      timeout-minutes: 8
+      shell: bash
+      run: |
+        set -euo pipefail
+        APP="$GITHUB_WORKSPACE/fincept-qt/dist/FinceptTerminal-Linux-x86_64.AppImage"
+        test -s "$APP"
+        scratch=$(mktemp -d "$RUNNER_TEMP/fincept-fx-package.XXXXXX")
+        trap 'rm -rf -- "$scratch"' EXIT
+        (
+          cd "$scratch"
+          timeout 60 "$APP" --appimage-extract 'usr/bin/scripts/*' > extract.log
+        )
+        staged="$scratch/squashfs-root/usr/bin/scripts"
+        for name in yfinance_data.py fincept_json.py fx_adjustment_observer_v1.py fx_adjustment_origin_v1.py; do
+          test -f "$staged/$name"
+          cmp "$GITHUB_WORKSPACE/fincept-qt/scripts/$name" "$staged/$name"
+          sha256sum "$staged/$name"
+        done
+        # Public dependency downloads only during image build; tests have no network.
+        docker build -t fincept-fx-adjustment-qa:ci - <<'DOCKERFILE'
+        FROM python:3.12-slim@sha256:423ed6ab25b1921a477529254bfeeabf5855151dc2c3141699a1bfc852199fbf
+        RUN python3 -m pip --isolated install --disable-pip-version-check --no-cache-dir --only-binary=:all: --timeout 15 --retries 0 numpy==2.4.6 pandas==2.3.3 yfinance==0.2.66 curl_cffi==0.13.0
+        USER 10001:10001
+        WORKDIR /work/repo
+        DOCKERFILE
+        docker run --rm --network none --read-only --cap-drop ALL \
+          --security-opt no-new-privileges --user 10001:10001 \
+          --pids-limit 128 --memory 1g --cpus 1 --tmpfs /tmp:rw,nosuid,size=64m \
+          --mount "type=bind,src=$GITHUB_WORKSPACE,dst=/work/repo,readonly" \
+          --mount "type=bind,src=$staged,dst=/qa-scripts,readonly" \
+          --env HOME=/tmp --env PYTHONDONTWRITEBYTECODE=1 \
+          --env PYTHONPATH=/qa-scripts:/work/repo/scripts:/work/repo/scripts/yahoo_capture_service_v1 \
+          fincept-fx-adjustment-qa:ci python3 -m unittest discover \
+          -s tests/fincept_original -p test_fx_adjustment_diagnostic_integration_v1.py -v
+        echo "FINCEPT_PACKAGED_FX_ADJUSTMENT_QA_PASS"
+
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:

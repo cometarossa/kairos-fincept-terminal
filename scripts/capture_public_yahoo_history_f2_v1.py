@@ -212,7 +212,9 @@ def capture(directory: Path, symbol: str = "SPY", period: str = "5d") -> None:
             reason = "RAW_INVALID_BAR"
             if type(detail) is str:
                 candidate = "RAW_INVALID_BAR_" + detail
-                if candidate in REASONS:
+                if candidate in REASONS and candidate not in (
+                        "RAW_INVALID_BAR_PRE_ADJUSTMENT_OHLC_ORDER",
+                        "RAW_INVALID_BAR_ADJUSTMENT_STAGE_OHLC_ORDER"):
                     reason = candidate
             if diagnostic and reason == "RAW_INVALID_BAR_OHLC_ORDER":
                 origin = rows.get("adjustment_origin")

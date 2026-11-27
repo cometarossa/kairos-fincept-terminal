@@ -56,4 +56,3 @@ def classify_order_origin(before, adjusted, returned, *, failure_position, reaso
         return INTRODUCED if _ordered(before[failure_position]) else PREEXISTING
     except (ValueError, TypeError, OverflowError):
         return UNKNOWN
-

@@ -1263,18 +1263,29 @@ def get_historical_period(symbol, period='6mo', interval='1d', *, strict_researc
                 errors.pop(symbol, None)
         ticker = yf.Ticker(symbol)
         _buf = io.StringIO()
-        scope = contextlib.nullcontext(None)
-        if diagnose_adjustment_origin and getattr(yf, "__version__", None) == "0.2.66":
-            from fx_adjustment_observer_v1 import observe_once
-            scope = observe_once(yf.utils)
-        with contextlib.redirect_stdout(_buf), scope as observation:
-            # Pin adjusted OHLC explicitly: the original installed yfinance
-            # 0.2.66 currently defaults auto_adjust=True/back_adjust=False.
-            # Do not rely on a future library-default change to silently
-            # reinterpret MCP research prices. This is NOT source attestation.
-            hist = ticker.history(period=period, interval=interval,
-                                  auto_adjust=True, back_adjust=False,
-                                  timeout=_NET_TIMEOUT)
+        observation = None
+        stack = contextlib.ExitStack()
+        with contextlib.redirect_stdout(_buf):
+            # Diagnostics must not trigger another history call or change admission.
+            if diagnose_adjustment_origin and getattr(yf, "__version__", None) == "0.2.66":
+                try:
+                    from fx_adjustment_observer_v1 import observe_once
+                    observation = stack.enter_context(observe_once(yf.utils))
+                except Exception:
+                    observation = None
+            try:
+                # Pin adjusted OHLC explicitly: the original installed yfinance
+                # 0.2.66 currently defaults auto_adjust=True/back_adjust=False.
+                # Do not rely on a future library-default change to silently
+                # reinterpret MCP research prices. This is NOT source attestation.
+                hist = ticker.history(period=period, interval=interval,
+                                      auto_adjust=True, back_adjust=False,
+                                      timeout=_NET_TIMEOUT)
+            finally:
+                try:
+                    stack.close()
+                except Exception:
+                    observation = None
 
         if hist.empty:
             if _public_yahoo_history_qa_enabled(symbol, period, interval):
@@ -1291,8 +1302,11 @@ def get_historical_period(symbol, period='6mo', interval='1d', *, strict_researc
                     if diagnose_research_raw_bar:
                         result["raw_bar_failure_class"] = failure
                     if diagnose_adjustment_origin and failure == "OHLC_ORDER" and observation is not None:
-                        origin = observation.classify(hist, failure_position=position, reason=failure)
-                        if origin in ("PRE_ADJUSTMENT_OHLC_ORDER", "ADJUSTMENT_STAGE_OHLC_ORDER"):
+                        try:
+                            origin = observation.classify(hist, failure_position=position, reason=failure)
+                        except Exception:
+                            origin = None
+                        if type(origin) is str and origin in ("PRE_ADJUSTMENT_OHLC_ORDER", "ADJUSTMENT_STAGE_OHLC_ORDER"):
                             result["adjustment_origin"] = origin
                     return result
             # Same NaN guard as get_historical — this is the chart path, where

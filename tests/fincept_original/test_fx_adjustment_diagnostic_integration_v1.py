@@ -6,6 +6,7 @@ import yfinance as yf
 import yfinance.utils as u
 from yfinance.scrapers.history import PriceHistory
 import yfinance_data as a
+import fx_adjustment_observer_v1 as observer
 import capture_public_yahoo_history_f2_v1 as prod
 from capture_service import child_env,history_diagnostic,HISTORY_EXIT_REASONS
 
@@ -70,6 +71,33 @@ class TestIntegration(unittest.TestCase):
   with patch.dict(os.environ,{"FINCEPT_FX_ADJUSTMENT_DIAGNOSTIC_ACK":ACK},clear=True),patch.object(a.yf,"Ticker") as t:
    out=a.get_historical_period("SPY","6mo","1d",strict_research=True,diagnose_research_raw_bar=True,diagnose_adjustment_origin=True)
    self.assertEqual(out,{"error":"RESEARCH_ADJUSTMENT_DIAGNOSTICS_DENIED"});t.assert_not_called()
+ def test_optional_observer_errors_keep_original_outcome(self):
+  @contextlib.contextmanager
+  def broken_entry(_):
+   raise RuntimeError("fixture")
+   yield
+  @contextlib.contextmanager
+  def broken_exit(_):
+   yield None
+   raise RuntimeError("fixture")
+  for scope in (broken_entry,broken_exit):
+   with self.subTest(scope=scope.__name__),patch.object(observer,"observe_once",scope):
+    self.assertEqual(self.fetch("adjust")[0],49)
+    self.assertEqual(self.fetch("valid",valid=True)[0],0)
+  with patch.object(observer.Observation,"classify",side_effect=RuntimeError("fixture")):
+   self.assertEqual(self.fetch("adjust")[0],49)
+ def test_forged_origin_cannot_bypass_opt_in(self):
+  for diagnostic in (True,False):
+   for label in ("PRE_ADJUSTMENT_OHLC_ORDER","ADJUSTMENT_STAGE_OHLC_ORDER"):
+    with self.subTest(diagnostic=diagnostic,label=label), tempfile.TemporaryDirectory() as td:
+     target=Path(td)/"long-EURUSD=X";target.mkdir(mode=0o700)
+     env=child_env(10001,"history",period="6mo")
+     if not diagnostic:env.pop("FINCEPT_FX_ADJUSTMENT_DIAGNOSTIC_ACK")
+     argv=["capture","--inbox",td,"--symbol","EURUSD=X","--period","6mo"]
+     with patch.dict(os.environ,env,clear=True),patch.object(sys,"argv",argv),patch.object(a,"get_historical_period",return_value={"error":"RESEARCH_RAW_INVALID_BAR","raw_bar_failure_class":label,"adjustment_origin":label}) as fetch,contextlib.redirect_stdout(io.StringIO()):
+      self.assertEqual(prod.main(),34)
+     fetch.assert_called_once()
+     self.assertFalse((target/"snapshot.json").exists())
  def test_protocol(self):
   self.assertEqual(set(prod.REASON_EXIT_CODES),prod.REASONS)
   self.assertEqual(HISTORY_EXIT_REASONS,{v:k for k,v in prod.REASON_EXIT_CODES.items()})

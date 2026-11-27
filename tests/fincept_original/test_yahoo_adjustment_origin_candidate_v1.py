@@ -22,7 +22,7 @@ def _rows(frame):
         ts, *prices = row
         if type(ts) is not int or (previous is not None and ts <= previous):
             raise ValueError("identity")
-        if any(type(x) not in (int, float) or not math.isfinite(x) or x <= 0
+        if any((type(x) is not int and type(x) is not float) or not math.isfinite(x) or x <= 0
                for x in prices):
             raise ValueError("price")
         previous = ts
@@ -120,6 +120,15 @@ class AdjustmentOriginCandidateTests(unittest.TestCase):
         for reason in (None, True, 1, Pretender(), StringSubclass("OHLC_ORDER")):
             with self.subTest(kind=type(reason).__name__):
                 self.assertEqual(self.label((self.good,), (self.bad,), reason=reason), UNKNOWN)
+
+    def test_invalid_price_metaclass_never_compared(self):
+        class PretenderMeta(type):
+            def __eq__(self, other):
+                raise AssertionError("untrusted metaclass equality invoked")
+        class Pretender(metaclass=PretenderMeta):
+            pass
+        before = ((1, Pretender(), 1.0, 0.9, 1.0),)
+        self.assertEqual(self.label(before, (self.bad,)), UNKNOWN)
 
     def test_only_fixed_labels_no_values(self):
         self.assertEqual(self.label((self.good,), (self.bad,), reason="private provider text"), UNKNOWN)

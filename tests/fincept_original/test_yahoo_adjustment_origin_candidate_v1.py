@@ -47,6 +47,8 @@ def classify_order_origin(before, adjusted, returned, *, failure_position, reaso
     try:
         before, adjusted, returned = map(_rows, (before, adjusted, returned))
         if (len(before) != len(adjusted) or adjusted != returned
+                or any(type(a) is not type(b) for ar, rr in zip(adjusted, returned)
+                       for a, b in zip(ar, rr))
                 or tuple(r[0] for r in before) != tuple(r[0] for r in adjusted)
                 or not 0 <= failure_position < len(returned)
                 or any(not _ordered(r) for r in returned[:failure_position])
@@ -129,6 +131,10 @@ class AdjustmentOriginCandidateTests(unittest.TestCase):
             pass
         before = ((1, Pretender(), 1.0, 0.9, 1.0),)
         self.assertEqual(self.label(before, (self.bad,)), UNKNOWN)
+
+    def test_postprocessing_numeric_type_change_is_unknown(self):
+        changed = (1, 1, *self.bad[2:])
+        self.assertEqual(self.label((self.good,), (self.bad,), (changed,)), UNKNOWN)
 
     def test_only_fixed_labels_no_values(self):
         self.assertEqual(self.label((self.good,), (self.bad,), reason="private provider text"), UNKNOWN)

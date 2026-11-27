@@ -42,7 +42,7 @@ def classify_order_origin(before, adjusted, returned, *, failure_position, reaso
     adjustment stage, not the numerical mechanism or the size of the error.
     Both outcomes leave the original strict rejection intact.
     """
-    if reason != "OHLC_ORDER" or type(failure_position) is not int:
+    if type(reason) is not str or reason != "OHLC_ORDER" or type(failure_position) is not int:
         return UNKNOWN
     try:
         before, adjusted, returned = map(_rows, (before, adjusted, returned))
@@ -110,6 +110,16 @@ class AdjustmentOriginCandidateTests(unittest.TestCase):
         before = tuple((n, *self.good[1:]) for n in range(161))
         after = tuple((n, *self.bad[1:]) for n in range(161))
         self.assertEqual(self.label(before, after), UNKNOWN)
+
+    def test_nonstring_reason_never_compared(self):
+        class Pretender:
+            def __ne__(self, other):
+                raise AssertionError("untrusted equality invoked")
+        class StringSubclass(str):
+            pass
+        for reason in (None, True, 1, Pretender(), StringSubclass("OHLC_ORDER")):
+            with self.subTest(kind=type(reason).__name__):
+                self.assertEqual(self.label((self.good,), (self.bad,), reason=reason), UNKNOWN)
 
     def test_only_fixed_labels_no_values(self):
         self.assertEqual(self.label((self.good,), (self.bad,), reason="private provider text"), UNKNOWN)

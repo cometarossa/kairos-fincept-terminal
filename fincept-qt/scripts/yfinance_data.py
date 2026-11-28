@@ -1306,7 +1306,7 @@ def get_historical_period(symbol, period='6mo', interval='1d', *, strict_researc
                             origin = observation.classify(hist, failure_position=position, reason=failure)
                         except Exception:
                             origin = None
-                        if type(origin) is str and origin in ("PRE_ADJUSTMENT_OHLC_ORDER", "ADJUSTMENT_STAGE_OHLC_ORDER"):
+                        if type(origin) is str and origin in ("PRE_ADJUSTMENT_OHLC_ORDER", "ADJUSTMENT_STAGE_OHLC_ORDER", "DECODED_QUOTE_OHLC_ORDER"):
                             result["adjustment_origin"] = origin
                     return result
             # Same NaN guard as get_historical — this is the chart path, where

@@ -49,6 +49,7 @@ REASONS = frozenset({
     "INVALID_OHLC", "INVALID_VOLUME", "INSUFFICIENT_SPAN", "STALE_HISTORY",
     "OVERSIZED_BARS", "PUBLICATION_REJECTED", "INTERNAL_FAILURE",
     "RAW_INVALID_BAR_PRE_ADJUSTMENT_OHLC_ORDER", "RAW_INVALID_BAR_ADJUSTMENT_STAGE_OHLC_ORDER",
+    "RAW_INVALID_BAR_DECODED_QUOTE_OHLC_ORDER",
 })
 
 
@@ -92,7 +93,8 @@ REASON_EXIT_CODES = {
     "UNSAFE_DIRECTORY": 54,
     "WINDOW_DENIED": 55,
     "RAW_INVALID_BAR_PRE_ADJUSTMENT_OHLC_ORDER": 56,
-    "RAW_INVALID_BAR_ADJUSTMENT_STAGE_OHLC_ORDER": 57
+    "RAW_INVALID_BAR_ADJUSTMENT_STAGE_OHLC_ORDER": 57,
+    "RAW_INVALID_BAR_DECODED_QUOTE_OHLC_ORDER": 58
 }
 
 
@@ -214,11 +216,12 @@ def capture(directory: Path, symbol: str = "SPY", period: str = "5d") -> None:
                 candidate = "RAW_INVALID_BAR_" + detail
                 if candidate in REASONS and candidate not in (
                         "RAW_INVALID_BAR_PRE_ADJUSTMENT_OHLC_ORDER",
-                        "RAW_INVALID_BAR_ADJUSTMENT_STAGE_OHLC_ORDER"):
+                        "RAW_INVALID_BAR_ADJUSTMENT_STAGE_OHLC_ORDER",
+                        "RAW_INVALID_BAR_DECODED_QUOTE_OHLC_ORDER"):
                     reason = candidate
             if diagnostic and reason == "RAW_INVALID_BAR_OHLC_ORDER":
                 origin = rows.get("adjustment_origin")
-                if type(origin) is str and origin in ("PRE_ADJUSTMENT_OHLC_ORDER", "ADJUSTMENT_STAGE_OHLC_ORDER"):
+                if type(origin) is str and origin in ("PRE_ADJUSTMENT_OHLC_ORDER", "ADJUSTMENT_STAGE_OHLC_ORDER", "DECODED_QUOTE_OHLC_ORDER"):
                     reason = "RAW_INVALID_BAR_" + origin
             raise CaptureRejected(reason, "invalid unrounded provider bar")
         if type(rows) is dict and "error" in rows:

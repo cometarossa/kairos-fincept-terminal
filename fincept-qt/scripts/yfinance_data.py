@@ -1240,8 +1240,13 @@ def _research_raw_bar_valid(row):
     return _research_raw_bar_failure(row) is None
 
 
-def get_historical_period(symbol, period='6mo', interval='1d', *, strict_research=False, preserve_research_precision=False, diagnose_research_raw_bar=False):
+def get_historical_period(symbol, period='6mo', interval='1d', *, strict_research=False, preserve_research_precision=False, diagnose_research_raw_bar=False, diagnose_adjustment_origin=False):
     """Fetch historical data using a period string (e.g., '1mo', '6mo', '1y', '5y')"""
+    if type(diagnose_adjustment_origin) is not bool or (diagnose_adjustment_origin and
+            (strict_research is not True or diagnose_research_raw_bar is not True or
+             (symbol, period, interval) != ("EURUSD=X", "6mo", "1d") or
+             os.environ.get("FINCEPT_FX_ADJUSTMENT_DIAGNOSTIC_ACK") != "FINCEPT_FX_ADJUSTMENT_ORIGIN_V1")):
+        return {"error": "RESEARCH_ADJUSTMENT_DIAGNOSTICS_DENIED"}
     if type(diagnose_research_raw_bar) is not bool or (
             diagnose_research_raw_bar and strict_research is not True):
         return {"error": "RESEARCH_DIAGNOSTICS_REQUIRES_STRICT"}
@@ -1258,14 +1263,29 @@ def get_historical_period(symbol, period='6mo', interval='1d', *, strict_researc
                 errors.pop(symbol, None)
         ticker = yf.Ticker(symbol)
         _buf = io.StringIO()
+        observation = None
+        stack = contextlib.ExitStack()
         with contextlib.redirect_stdout(_buf):
-            # Pin adjusted OHLC explicitly: the original installed yfinance
-            # 0.2.66 currently defaults auto_adjust=True/back_adjust=False.
-            # Do not rely on a future library-default change to silently
-            # reinterpret MCP research prices. This is NOT source attestation.
-            hist = ticker.history(period=period, interval=interval,
-                                  auto_adjust=True, back_adjust=False,
-                                  timeout=_NET_TIMEOUT)
+            # Diagnostics must not trigger another history call or change admission.
+            if diagnose_adjustment_origin and getattr(yf, "__version__", None) == "0.2.66":
+                try:
+                    from fx_adjustment_observer_v1 import observe_once
+                    observation = stack.enter_context(observe_once(yf.utils))
+                except Exception:
+                    observation = None
+            try:
+                # Pin adjusted OHLC explicitly: the original installed yfinance
+                # 0.2.66 currently defaults auto_adjust=True/back_adjust=False.
+                # Do not rely on a future library-default change to silently
+                # reinterpret MCP research prices. This is NOT source attestation.
+                hist = ticker.history(period=period, interval=interval,
+                                      auto_adjust=True, back_adjust=False,
+                                      timeout=_NET_TIMEOUT)
+            finally:
+                try:
+                    stack.close()
+                except Exception:
+                    observation = None
 
         if hist.empty:
             if _public_yahoo_history_qa_enabled(symbol, period, interval):
@@ -1273,7 +1293,7 @@ def get_historical_period(symbol, period='6mo', interval='1d', *, strict_researc
             return []
 
         historical_data = []
-        for index, row in hist.iterrows():
+        for position, (index, row) in enumerate(hist.iterrows()):
             if strict_research:
                 failure = _research_raw_bar_failure(row)
                 if failure is not None:
@@ -1281,6 +1301,13 @@ def get_historical_period(symbol, period='6mo', interval='1d', *, strict_researc
                     result = {"error": "RESEARCH_RAW_INVALID_BAR"}
                     if diagnose_research_raw_bar:
                         result["raw_bar_failure_class"] = failure
+                    if diagnose_adjustment_origin and failure == "OHLC_ORDER" and observation is not None:
+                        try:
+                            origin = observation.classify(hist, failure_position=position, reason=failure)
+                        except Exception:
+                            origin = None
+                        if type(origin) is str and origin in ("PRE_ADJUSTMENT_OHLC_ORDER", "ADJUSTMENT_STAGE_OHLC_ORDER"):
+                            result["adjustment_origin"] = origin
                     return result
             # Same NaN guard as get_historical — this is the chart path, where
             # one halted bar previously blanked the entire series.

@@ -46,13 +46,18 @@ HISTORY_EXIT_REASONS = {
     52: "STALE_HISTORY",
     53: "SYMBOL_DENIED",
     54: "UNSAFE_DIRECTORY",
-    55: "WINDOW_DENIED"
+    55: "WINDOW_DENIED",
+    56: "RAW_INVALID_BAR_PRE_ADJUSTMENT_OHLC_ORDER",
+    57: "RAW_INVALID_BAR_ADJUSTMENT_STAGE_OHLC_ORDER"
 }
 
 def history_diagnostic(symbol, period, code):
     if symbol not in ("SPY","EURUSD=X") or period not in ("5d","6mo") or type(code) is not int or code == 0:
         return None
-    return "HISTORY_CAPTURE_DIAGNOSTIC symbol="+symbol+" period="+period+" reason="+HISTORY_EXIT_REASONS.get(code,"CHILD_UNAVAILABLE_UNCLASSIFIED")
+    reason=HISTORY_EXIT_REASONS.get(code,"CHILD_UNAVAILABLE_UNCLASSIFIED")
+    if code in (56,57) and (symbol,period)!=("EURUSD=X","6mo"):
+        reason="CHILD_UNAVAILABLE_UNCLASSIFIED"
+    return "HISTORY_CAPTURE_DIAGNOSTIC symbol="+symbol+" period="+period+" reason="+reason
 
 ROOT=Path("/capture")
 CONTROL=Path("/control")
@@ -74,6 +79,8 @@ def child_env(port,lane,*,period="5d"):
          "HTTP_PROXY":url,"HTTPS_PROXY":url,"ALL_PROXY":url,"http_proxy":url,"https_proxy":url,"all_proxy":url,"NO_PROXY":"","no_proxy":""}
     if lane=="history":
         env["FINCEPT_HISTORY_REASON_EXIT_ACK"]="FINCEPT_HISTORY_REASON_EXIT_V1"
+        if period == "6mo":
+            env["FINCEPT_FX_ADJUSTMENT_DIAGNOSTIC_ACK"]="FINCEPT_FX_ADJUSTMENT_ORIGIN_V1"
         env["FINCEPT_PUBLIC_HISTORY_CAPTURE_ACK"]="DUAL_WINDOW_YAHOO_HISTORY_SNAPSHOT_V1" if period=="6mo" else "MULTI_YAHOO_HISTORY_SNAPSHOT_V1"
     elif lane=="quote":
         env["FINCEPT_PUBLIC_QUOTE_CAPTURE_ACK"]="PUBLIC_YAHOO_QUOTE_RESEARCH_V1"

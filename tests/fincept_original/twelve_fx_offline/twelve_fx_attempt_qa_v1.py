@@ -13,7 +13,7 @@ import sys
 class AttemptDenied(ValueError):
     pass
 
-_MODES = frozenset(("success", "failure", "stall"))
+_MODES = frozenset(("success", "failure", "stall", "tls_success", "tls_rate_limit", "tls_invalid"))
 _MARKER = b'{"scope":"OFFLINE_FIXTURE_ONLY","attempt":"CONSUMED"}\n'
 _CHILD = Path(__file__).with_name("twelve_fx_attempt_child_qa_v1.py")
 
@@ -47,11 +47,14 @@ def once(directory, mode, *, deadline_seconds=1.0):
                 [sys.executable, "-I", str(_CHILD), mode],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL, timeout=deadline_seconds,
-                check=False, env={"PATH":"/usr/bin:/bin","PYTHONDONTWRITEBYTECODE":"1"})
+                check=False, env={"PATH":"/usr/bin:/bin","PYTHONDONTWRITEBYTECODE":"1","TWELVE_DATA_API_KEY":"OFFLINE_FIXTURE_NOT_A_KEY","HOME":"/tmp"})
         except subprocess.TimeoutExpired:
             return "DEADLINE_EXCEEDED"
         except OSError:
             return "CHILD_UNAVAILABLE"
+        if mode.startswith("tls_"):
+            return {0:"TLS_FIXTURE_SHAPE_ONLY", 20:"TLS_FIXTURE_RATE_LIMITED",
+                    21:"TLS_FIXTURE_DATA_REJECTED"}.get(result.returncode,"TLS_FIXTURE_FAILED")
         return "FIXTURE_OK" if result.returncode == 0 else "FIXTURE_FAILED"
     except AttemptDenied:
         raise

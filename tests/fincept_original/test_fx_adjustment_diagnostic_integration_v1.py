@@ -2,6 +2,8 @@ import os,sys,copy,datetime,tempfile,time,unittest,io,contextlib
 from pathlib import Path
 from unittest.mock import patch
 import numpy as np
+import pandas as pd
+from types import SimpleNamespace
 import yfinance as yf
 import yfinance.utils as u
 from yfinance.scrapers.history import PriceHistory
@@ -85,6 +87,43 @@ class TestIntegration(unittest.TestCase):
    return frame
   with patch.object(u,"parse_quotes",corrupt):
    self.assertEqual(self.fetch("valid",decoded=True)[0],56)
+ def test_decoded_requires_actual_history_frame(self):
+  stamp=1700000000
+  data={"meta":{"symbol":"EURUSD=X","instrumentType":"CURRENCY","dataGranularity":"1d","exchangeTimezoneName":"UTC"},"timestamp":[stamp],"indicators":{"quote":[{"open":[1.2],"high":[1.1],"low":[1.0],"close":[1.2],"volume":[0]}]}}
+  f=pd.DataFrame({"Open":[1.2],"High":[1.1],"Low":[1.0],"Close":[1.2],"Adj Close":[1.2]},index=pd.to_datetime([stamp],unit="s",utc=True))
+  for mode in ("ignored","failed","late"):
+   with self.subTest(mode=mode):
+    def parse(d):
+     if mode=="failed":raise ValueError("fixture")
+     return u.parse_quotes(d)
+    module=SimpleNamespace(parse_quotes=parse,auto_adjust=u.auto_adjust)
+    with observer.observe_once(module) as obs:
+     if mode!="late":
+      try:module.parse_quotes(data)
+      except ValueError:pass
+     result=module.auto_adjust(f)
+     if mode=="late":module.parse_quotes(data)
+    self.assertEqual(obs.classify(result,failure_position=0,reason="OHLC_ORDER"),"PRE_ADJUSTMENT_OHLC_ORDER")
+    self.assertIs(module.parse_quotes,parse)
+    self.assertIs(module.auto_adjust,u.auto_adjust)
+ def test_independent_hook_cleanup(self):
+  for mode in ("deleted","replaced","raised"):
+   with self.subTest(mode=mode):
+    module=SimpleNamespace(parse_quotes=u.parse_quotes,auto_adjust=u.auto_adjust)
+    original_parse=module.parse_quotes
+    original_adjust=module.auto_adjust
+    replacement=lambda data:None
+    with self.assertRaisesRegex(RuntimeError,"original failure"):
+     with observer.observe_once(module) as obs:
+      if mode=="deleted":del module.parse_quotes
+      elif mode=="replaced":module.parse_quotes=replacement
+      raise RuntimeError("original failure")
+    self.assertIs(module.auto_adjust,original_adjust)
+    self.assertTrue(obs.closed and obs.restored)
+    self.assertEqual(obs.parse_restored,mode=="raised")
+    if mode=="deleted":self.assertFalse(hasattr(module,"parse_quotes"))
+    elif mode=="replaced":self.assertIs(module.parse_quotes,replacement)
+    else:self.assertIs(module.parse_quotes,original_parse)
  def test_legacy_rejection(self):
   code,out=self.fetch("adjust",diagnostic=False);self.assertEqual(code,49)
   self.assertIn("reason=RAW_INVALID_BAR_OHLC_ORDER",out)

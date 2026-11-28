@@ -4,6 +4,8 @@ No network, repair, alternate request, or persistence.
 """
 from contextlib import contextmanager
 import threading
+import inspect
+import sys
 import datetime as dt
 import math
 from zoneinfo import ZoneInfo
@@ -87,6 +89,7 @@ class Observation:
         self.parse_calls = 0
         self.decoded = None
         self.parse_restored = False
+        self.parse_linked = False
         self.before = self.after = None
         self.closed = False
         self.restored = False
@@ -96,7 +99,7 @@ class Observation:
             return UNKNOWN
         origin = classify_order_origin(self.before, self.after, frame_rows(returned),
                                        failure_position=failure_position, reason=reason)
-        if (origin == PREEXISTING and self.parse_restored and self.parse_calls == 1
+        if (origin == PREEXISTING and self.parse_restored and self.parse_linked and self.parse_calls == 1
                 and decoded_matches_before(self.decoded, self.before)):
             return DECODED
         return origin
@@ -112,14 +115,70 @@ def observe_once(utils):
         return
     original = utils.auto_adjust
     original_parse = utils.parse_quotes
+    try:
+        from yfinance.scrapers.history import PriceHistory
+        history_code = inspect.unwrap(PriceHistory.history).__code__
+    except Exception:
+        history_code = None
+    parse_caller = None
     def parse_wrapper(data, *args, **kwargs):
+        nonlocal parse_caller
         obs.parse_calls += 1
-        obs.decoded = decoded_quote_rows(data) if obs.parse_calls == 1 else None
-        return original_parse(data, *args, **kwargs)
+        parse_caller = None
+        obs.decoded = None
+        candidate = None
+        caller = None
+        try:
+            caller = sys._getframe(1)
+            local = caller.f_locals
+            if (obs.parse_calls == 1 and obs.calls == 0
+                    and caller.f_code is history_code
+                    and local["data"]["chart"]["result"][0] is data
+                    and local["self"].ticker == "EURUSD=X"
+                    and local["params"]["interval"] == "1d"
+                    and local["interval"] == "1d"
+                    and not local["repair"]):
+                candidate = decoded_quote_rows(data)
+        except Exception:
+            pass
+        out = original_parse(data, *args, **kwargs)
+        # Only a successfully returned parser result from the actual pinned
+        # history frame can establish provenance. Retain the frame until
+        # auto_adjust, then release it; no rows are persisted or logged.
+        try:
+            if candidate is not None and type(out) is pd.DataFrame:
+                tz, rows = candidate
+                cols = ["Open", "High", "Low", "Close"]
+                index = out.index
+                if (type(index) is pd.DatetimeIndex and index.tz is None
+                        and not index.hasnans and out.columns.is_unique
+                        and len(index) == len(rows)
+                        and all(str(out[k].dtype) == "float64" for k in cols)
+                        and tuple(int(t.value) for t in index) ==
+                            tuple(t * 1000000000 for t in data["timestamp"])
+                        and rows == tuple((t.date(), *prices) for t, prices in zip(
+                            index.tz_localize("UTC").tz_convert(tz),
+                            out[cols].itertuples(index=False, name=None)))):
+                    obs.decoded = candidate
+                    parse_caller = caller
+        except Exception:
+            pass
+        return out
     def wrapper(frame, *args, **kwargs):
+        nonlocal parse_caller
         obs.calls += 1
         if obs.calls == 1:
             obs.before = frame_rows(frame)
+            try:
+                caller = sys._getframe(1)
+                obs.parse_linked = (parse_caller is not None
+                                    and caller is parse_caller
+                                    and caller.f_code is history_code
+                                    and caller.f_locals.get("df") is frame)
+            except Exception:
+                obs.parse_linked = False
+            finally:
+                parse_caller = None
         else:
             obs.before = obs.after = None
         out = original(frame, *args, **kwargs)
@@ -131,10 +190,19 @@ def observe_once(utils):
         utils.parse_quotes = parse_wrapper
         yield obs
     finally:
-        if utils.parse_quotes is parse_wrapper:
-            utils.parse_quotes = original_parse
-            obs.parse_restored = True
-        if utils.auto_adjust is wrapper:
-            utils.auto_adjust = original
-            obs.restored = True
-        obs.closed = True
+        parse_caller = None
+        try:
+            if getattr(utils, "parse_quotes", None) is parse_wrapper:
+                utils.parse_quotes = original_parse
+                obs.parse_restored = True
+        except Exception:
+            obs.parse_restored = False
+        finally:
+            try:
+                if getattr(utils, "auto_adjust", None) is wrapper:
+                    utils.auto_adjust = original
+                    obs.restored = True
+            except Exception:
+                obs.restored = False
+            finally:
+                obs.closed = True

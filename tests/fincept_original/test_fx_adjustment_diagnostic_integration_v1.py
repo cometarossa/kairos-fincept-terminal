@@ -16,13 +16,15 @@ class TestIntegration(unittest.TestCase):
   self.assertEqual(yf.__version__,"0.2.66")
   r=np.random.default_rng(42);c=r.uniform(.8,1.3,100000);adj=r.uniform(.8,1.3,100000)
   i=int(np.flatnonzero(c*(adj/c)<adj)[0]);self.c=float(c[i]);self.adj=float(adj[i])
- def fetch(self,kind,diagnostic=True,valid=False):
+ def fetch(self,kind,diagnostic=True,valid=False,decoded=False,alter=None):
   c=self.c;day=int(time.time())//86400*86400
   ts=[day-86400*n for n in range(175,0,-1) if datetime.datetime.fromtimestamp(day-86400*n,datetime.timezone.utc).weekday()<5] if valid else [day-86400]
   n=len(ts)
   high=c if kind!="pre" else c-.001
   adj=self.adj if kind=="adjust" else c
   payload={'chart':{'error':None,'result':[{'meta':{'currency':'USD','instrumentType':'CURRENCY','exchangeTimezoneName':'UTC','timezone':'UTC','validRanges':['5d','6mo'],'priceHint':5,'dataGranularity':'1d','regularMarketTime':ts[-1],'currentTradingPeriod':{'regular':{'start':ts[-1],'end':ts[-1]+86400,'timezone':'UTC','gmtoffset':0}}},'timestamp':ts,'indicators':{'quote':[{'open':[c]*n,'high':[high]*n,'low':[c-.01]*n,'close':[c]*n,'volume':[0]*n}],'adjclose':[{'adjclose':[adj]*n}]}}]}}
+  if decoded:payload['chart']['result'][0]['meta']['symbol']='EURUSD=X'
+  if alter:alter(payload['chart']['result'][0])
   class Response:
    text='fixture'
    def json(self):return copy.deepcopy(payload)
@@ -35,7 +37,7 @@ class TestIntegration(unittest.TestCase):
    def history(self,**kwargs):return p.history(**kwargs,raise_errors=True)
   env=child_env(10001,"history",period="6mo")
   if not diagnostic:env.pop("FINCEPT_FX_ADJUSTMENT_DIAGNOSTIC_ACK")
-  orig=u.auto_adjust
+  orig=u.auto_adjust;orig_parse=u.parse_quotes
   with tempfile.TemporaryDirectory() as td:
    target=Path(td)/"long-EURUSD=X";target.mkdir(mode=0o700)
    prior=target/"snapshot.json";previous=('{"captured_at_unix":'+str(day-86400)+'}').encode("ascii");prior.write_bytes(previous);prior.chmod(0o600)
@@ -44,7 +46,7 @@ class TestIntegration(unittest.TestCase):
    with patch.dict(os.environ,env,clear=True),patch.object(a.yf,'Ticker',return_value=Ticker()) as t,patch.object(sys,"argv",argv),contextlib.redirect_stdout(out):
     code=prod.main()
    self.assertEqual((t.call_count,data.calls),(1,1))
-   self.assertIs(u.auto_adjust,orig)
+   self.assertIs(u.auto_adjust,orig);self.assertIs(u.parse_quotes,orig_parse)
    if code: self.assertEqual(prior.read_bytes(),previous)
    else: self.assertNotEqual(prior.read_bytes(),previous)
    return code,out.getvalue()
@@ -55,6 +57,34 @@ class TestIntegration(unittest.TestCase):
  def test_preexisting(self):
   code,out=self.fetch("pre");self.assertEqual(code,56)
   self.assertIn("RAW_INVALID_BAR_PRE_ADJUSTMENT_OHLC_ORDER",out)
+ def test_decoded_quote(self):
+  code,out=self.fetch("pre",decoded=True)
+  self.assertEqual(code,58,out)
+  self.assertIn("RAW_INVALID_BAR_DECODED_QUOTE_OHLC_ORDER",out)
+  self.assertIn("reason=RAW_INVALID_BAR_DECODED_QUOTE_OHLC_ORDER",history_diagnostic("EURUSD=X","6mo",code))
+  self.assertIn("UNCLASSIFIED",history_diagnostic("SPY","6mo",code))
+  self.assertIn("UNCLASSIFIED",history_diagnostic("EURUSD=X","5d",code))
+ def test_decoded_fallbacks(self):
+  for key,value in (("symbol","SPY"),("instrumentType","EQUITY"),("dataGranularity","5m")):
+   with self.subTest(key=key):
+    self.assertEqual(self.fetch("pre",decoded=True,alter=lambda d:d["meta"].update({key:value}))[0],56)
+  self.assertEqual(self.fetch("adjust",decoded=True)[0],57)
+  self.assertEqual(self.fetch("pre",decoded=True,diagnostic=False)[0],49)
+  self.assertEqual(self.fetch("valid",decoded=True,valid=True)[0],0)
+ def test_ambiguous_decoded_date(self):
+  def duplicate(d):
+   d["timestamp"].append(d["timestamp"][0]+3600)
+   for col in d["indicators"]["quote"][0].values():col.append(col[0])
+   d["indicators"]["adjclose"][0]["adjclose"].append(d["indicators"]["adjclose"][0]["adjclose"][0])
+  self.assertEqual(self.fetch("pre",decoded=True,alter=duplicate)[0],56)
+ def test_decoded_tuple_changed_by_parse(self):
+  original=u.parse_quotes
+  def corrupt(data,*args,**kwargs):
+   frame=original(data,*args,**kwargs)
+   frame["High"]=frame["Close"]-.001
+   return frame
+  with patch.object(u,"parse_quotes",corrupt):
+   self.assertEqual(self.fetch("valid",decoded=True)[0],56)
  def test_legacy_rejection(self):
   code,out=self.fetch("adjust",diagnostic=False);self.assertEqual(code,49)
   self.assertIn("reason=RAW_INVALID_BAR_OHLC_ORDER",out)
@@ -88,7 +118,7 @@ class TestIntegration(unittest.TestCase):
    self.assertEqual(self.fetch("adjust")[0],49)
  def test_forged_origin_cannot_bypass_opt_in(self):
   for diagnostic in (True,False):
-   for label in ("PRE_ADJUSTMENT_OHLC_ORDER","ADJUSTMENT_STAGE_OHLC_ORDER"):
+   for label in ("PRE_ADJUSTMENT_OHLC_ORDER","ADJUSTMENT_STAGE_OHLC_ORDER","DECODED_QUOTE_OHLC_ORDER"):
     with self.subTest(diagnostic=diagnostic,label=label), tempfile.TemporaryDirectory() as td:
      target=Path(td)/"long-EURUSD=X";target.mkdir(mode=0o700)
      env=child_env(10001,"history",period="6mo")

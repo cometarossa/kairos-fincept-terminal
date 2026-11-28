@@ -48,14 +48,15 @@ HISTORY_EXIT_REASONS = {
     54: "UNSAFE_DIRECTORY",
     55: "WINDOW_DENIED",
     56: "RAW_INVALID_BAR_PRE_ADJUSTMENT_OHLC_ORDER",
-    57: "RAW_INVALID_BAR_ADJUSTMENT_STAGE_OHLC_ORDER"
+    57: "RAW_INVALID_BAR_ADJUSTMENT_STAGE_OHLC_ORDER",
+    58: "RAW_INVALID_BAR_DECODED_QUOTE_OHLC_ORDER"
 }
 
 def history_diagnostic(symbol, period, code):
     if symbol not in ("SPY","EURUSD=X") or period not in ("5d","6mo") or type(code) is not int or code == 0:
         return None
     reason=HISTORY_EXIT_REASONS.get(code,"CHILD_UNAVAILABLE_UNCLASSIFIED")
-    if code in (56,57) and (symbol,period)!=("EURUSD=X","6mo"):
+    if code in (56,57,58) and (symbol,period)!=("EURUSD=X","6mo"):
         reason="CHILD_UNAVAILABLE_UNCLASSIFIED"
     return "HISTORY_CAPTURE_DIAGNOSTIC symbol="+symbol+" period="+period+" reason="+reason
 

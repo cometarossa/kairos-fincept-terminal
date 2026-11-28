@@ -1,0 +1,9 @@
+# Twelve Data FX — offline shape qualification only
+
+This QA-only experiment is not imported by Fincept or KAIROS. It makes no requests, changes no credentials, scheduler, relay, runtime policy or production admission. The existing original Twelve Data adapter is unchanged. No provider entitlement or actual payload has been verified.
+
+Physical Zima PID3964666: 14/14 tests, same existing pinned capture image, network none, nonroot, read-only. Run from this directory with python -m unittest -v. This suite is standalone and is not yet a hosted CI gate.
+
+Candidate scope: one EUR/USD daily series of approximately six months, strict OHLC decimal strings, exact identity metadata, descending provider dates, bounded count and span. The required base/quote metadata and precision constraints are provisional and must be checked against an authorized real response. A missing date can pass shape qualification; no completeness or market calendar attestation is made. A caller-supplied completed-before date is not a market close attestation. Do not mix provider calendars or synthesize volume. Australia/Sydney is the documented forex default, not a verified timestamp for a particular response. No UTC instants are produced.
+
+Sources: https://support.twelvedata.com/en/articles/5745849-timezones ; https://twelvedata.com/news/april-2026-updates ; https://support.twelvedata.com/en/articles/5656039-how-to-get-historical-prices . Existing source adapter twelve_data.py tested separately under PID3962958; direct transport remains unqualified (retry, errors, credential safety). A future transport must have separately approved network scope and entitlement, bounded single attempt and sanitized error codes. No paid plan or provider access authorized by this QA.
